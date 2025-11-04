@@ -179,7 +179,7 @@ def run_ccpo_direct(
             criterion=cfg.CCPO.CRITERION
         )
 
-        conformal_predictor.fit_bootstrap_models_online_multistep(
+        results = conformal_predictor.fit_bootstrap_models_online_multistep(
             B=cfg.CCPO.B, batch_size=cfg.CCPO.BATCH_SIZE, EPOCHS=cfg.CCPO.EPOCHS,
             lr=cfg.CCPO.LEARNING_RATE, path=cfg.CCPO.WEIGHTS_PATH,
             patience=cfg.CCPO.PATIENCE, valid_mode=True # Use validation set for early stopping
@@ -204,56 +204,57 @@ def run_ccpo_direct(
         print(f"    Optimizing portfolio for each of {len(V_dates)} test periods (V)...")
         start_time_opt = time.time()
         portfolios_list = []
+        mu_pred_raw = results['test']['preds'].squeeze(1).cpu().numpy()
+        
+        # # We need the full raw data series to get lookback windows for V period predictions
+        # full_returns_raw = loader.resample_frequency(loader.raw_data, cfg.FREQUENCY)
+        # full_returns_values = full_returns_raw.values
+        # full_returns_dates = full_returns_raw.index
 
-        # We need the full raw data series to get lookback windows for V period predictions
-        full_returns_raw = loader.resample_frequency(loader.raw_data, cfg.FREQUENCY)
-        full_returns_values = full_returns_raw.values
-        full_returns_dates = full_returns_raw.index
-
-        if len(V_dates) == 0:
-             print("    Note: No V periods to optimize for.")
+        # if len(V_dates) == 0:
+        #      print("    Note: No V periods to optimize for.")
 
         for v_idx, v_date in enumerate(V_dates):
-            try:
-                # Find index in the full RAW series
-                date_idx = full_returns_dates.get_loc(v_date)
-            except KeyError:
-                date_idx = full_returns_dates.get_indexer([v_date], method='nearest')[0]
-                print(f"      Warning: Date {v_date.date()} not found exactly, using nearest: {full_returns_dates[date_idx].date()}")
+            # try:
+            #     # Find index in the full RAW series
+            #     date_idx = full_returns_dates.get_loc(v_date)
+            # except KeyError:
+            #     date_idx = full_returns_dates.get_indexer([v_date], method='nearest')[0]
+            #     print(f"      Warning: Date {v_date.date()} not found exactly, using nearest: {full_returns_dates[date_idx].date()}")
 
-            if date_idx < lookback:
-                print(f"      ⚠️  Skipping {v_date.date()}: not enough history ({date_idx} < {lookback})")
-                continue
+            # if date_idx < lookback:
+            #     print(f"      ⚠️  Skipping {v_date.date()}: not enough history ({date_idx} < {lookback})")
+            #     continue
 
-            # Get lookback window (RAW data), scale it for prediction
-            X_test_raw = full_returns_values[date_idx - lookback: date_idx]
-            if scaler:
-                 X_test_scaled = scaler.transform(X_test_raw)
-            else:
-                 X_test_scaled = X_test_raw # No scaling
+            # # Get lookback window (RAW data), scale it for prediction
+            # X_test_raw = full_returns_values[date_idx - lookback: date_idx]
+            # if scaler:
+            #      X_test_scaled = scaler.transform(X_test_raw)
+            # else:
+            #      X_test_scaled = X_test_raw # No scaling
 
-            X_test_tensor = torch.FloatTensor(X_test_scaled).unsqueeze(0).to(cfg.DEVICE)
+            # X_test_tensor = torch.FloatTensor(X_test_scaled).unsqueeze(0).to(cfg.DEVICE)
 
-            # Predict using ensemble
-            predictions = []
-            with torch.no_grad():
-                 for b in range(cfg.CCPO.B):
-                      model = conformal_predictor.models[b]
-                      model.eval()
-                      pred_scaled = model(X_test_tensor) # Prediction is scaled
-                      # Remove sequence length dim if present (e.g., LSTM)
-                      if pred_scaled.ndim == 3 and pred_scaled.shape[1] == 1:
-                           pred_scaled = pred_scaled.squeeze(1)
-                      elif pred_scaled.ndim != 2:
-                           print(f"      Warning: Unexpected prediction shape {pred_scaled.shape}")
-                      predictions.append(pred_scaled)
+            # # Predict using ensemble
+            # predictions = []
+            # with torch.no_grad():
+            #      for b in range(cfg.CCPO.B):
+            #           model = conformal_predictor.models[b]
+            #           model.eval()
+            #           pred_scaled = model(X_test_tensor) # Prediction is scaled
+            #           # Remove sequence length dim if present (e.g., LSTM)
+            #           if pred_scaled.ndim == 3 and pred_scaled.shape[1] == 1:
+            #                pred_scaled = pred_scaled.squeeze(1)
+            #           elif pred_scaled.ndim != 2:
+            #                print(f"      Warning: Unexpected prediction shape {pred_scaled.shape}")
+            #           predictions.append(pred_scaled)
 
-            mean_pred_scaled = torch.stack(predictions).mean(dim=0) # Shape: (1, n_assets)
-            mu_pred_raw = scaler.inverse_transform(mean_pred_scaled.cpu().numpy()).flatten()
+            # mean_pred_scaled = torch.stack(predictions).mean(dim=0) # Shape: (1, n_assets)
+            # mu_pred_raw = scaler.inverse_transform(mean_pred_scaled.cpu().numpy()).flatten()
 
             # Optimize portfolio using mu_hat (raw), cov_matrix (raw), radius (calibrated)
             opt_result = optimizer.optimize_portfolio_socp(
-                mu_hat=mu_pred_raw, cov_matrix=cov_matrix, radius=radius,
+                mu_hat=mu_pred_raw[v_idx], cov_matrix=cov_matrix, radius=radius_seq[v_idx],
                 gamma=cfg.CCPO.GAMMA, formulation=cfg.CCPO.FORMULATION
             )
 
@@ -380,7 +381,7 @@ def run_ccpo_rolling_counts(
             criterion=cfg.CCPO.CRITERION
         )
 
-        conformal_predictor.fit_bootstrap_models_online_multistep(
+        results = conformal_predictor.fit_bootstrap_models_online_multistep(
             B=cfg.CCPO.B, batch_size=cfg.CCPO.BATCH_SIZE, EPOCHS=cfg.CCPO.EPOCHS,
             lr=cfg.CCPO.LEARNING_RATE, path=cfg.CCPO.WEIGHTS_PATH,
             patience=cfg.CCPO.PATIENCE, valid_mode=True
@@ -406,47 +407,53 @@ def run_ccpo_rolling_counts(
         start_time_opt = time.time()
         portfolios_list = []
 
+        mu_pred_raw = results["test"]["y_pred"].squeeze(1).cpu().numpy()
+        
         # Need full raw data series for lookback windows during V period
-        full_returns_raw = loader.resample_frequency(loader.raw_data, cfg.FREQUENCY)
-        full_returns_values = full_returns_raw.values
-        full_returns_dates = full_returns_raw.index
+        # full_returns_raw = loader.resample_frequency(loader.raw_data, cfg.FREQUENCY)
+        # full_returns_values = full_returns_raw.values
+        # full_returns_dates = full_returns_raw.index
 
-        if len(V_dates) == 0:
-             print("    Note: No V periods to optimize for.")
+        # if len(V_dates) == 0:
+        #      print("    Note: No V periods to optimize for.")
 
         for v_idx, v_date in enumerate(V_dates):
-            try:
-                date_idx = full_returns_dates.get_loc(v_date)
-            except KeyError:
-                date_idx = full_returns_dates.get_indexer([v_date], method='nearest')[0]
-                print(f"      Warning: Date {v_date.date()} not found exactly, using nearest: {full_returns_dates[date_idx].date()}")
+        #     try:
+        #         date_idx = full_returns_dates.get_loc(v_date)
+        #     except KeyError:
+        #         date_idx = full_returns_dates.get_indexer([v_date], method='nearest')[0]
+        #         print(f"      Warning: Date {v_date.date()} not found exactly, using nearest: {full_returns_dates[date_idx].date()}")
 
-            if date_idx < lookback:
-                print(f"      ⚠️  Skipping {v_date.date()}: not enough history ({date_idx} < {lookback})")
-                continue
+        #     if date_idx < lookback:
+        #         print(f"      ⚠️  Skipping {v_date.date()}: not enough history ({date_idx} < {lookback})")
+        #         continue
 
-            X_test_raw = full_returns_values[date_idx - lookback: date_idx]
-            if scaler: X_test_scaled = scaler.transform(X_test_raw)
-            else: X_test_scaled = X_test_raw
-            X_test_tensor = torch.FloatTensor(X_test_scaled).unsqueeze(0).to(cfg.DEVICE)
+        #     X_test_raw = full_returns_values[date_idx - lookback: date_idx]
+        #     if scaler: X_test_scaled = scaler.transform(X_test_raw)
+        #     else: X_test_scaled = X_test_raw
+        #     X_test_tensor = torch.FloatTensor(X_test_scaled).unsqueeze(0).to(cfg.DEVICE)
 
-            predictions = []
-            with torch.no_grad():
-                for b in range(cfg.CCPO.B):
-                    model = conformal_predictor.models[b]
-                    model.eval()
-                    pred_scaled = model(X_test_tensor)
-                    if pred_scaled.ndim == 3 and pred_scaled.shape[1] == 1: pred_scaled = pred_scaled.squeeze(1)
-                    predictions.append(pred_scaled)
+        #     predictions = []
+        #     with torch.no_grad():
+        #         for b in range(cfg.CCPO.B):
+        #             model = conformal_predictor.models[b]
+        #             model.eval()
+        #             pred_scaled = model(X_test_tensor)
+        #             if pred_scaled.ndim == 3 and pred_scaled.shape[1] == 1: pred_scaled = pred_scaled.squeeze(1)
+        #             predictions.append(pred_scaled)
 
-            mean_pred_scaled = torch.stack(predictions).mean(dim=0)
-            mu_pred_raw = scaler.inverse_transform(mean_pred_scaled.cpu().numpy()).flatten()
+        #     mean_pred_scaled = torch.stack(predictions).mean(dim=0)
+        #     mu_pred_raw = scaler.inverse_transform(mean_pred_scaled.cpu().numpy()).flatten()
 
+            # print(f'{v_idx} prediction: {mu_pred_raw[v_idx]}, radius: {radius_seq[v_idx]}')
             opt_result = optimizer.optimize_portfolio_socp(
-                mu_hat=mu_pred_raw, cov_matrix=cov_matrix, radius=radius,
+                mu_hat=mu_pred_raw[v_idx], cov_matrix=cov_matrix, radius=radius_seq[v_idx],
                 gamma=cfg.CCPO.GAMMA, formulation=cfg.CCPO.FORMULATION
             )
-
+            
+            # print(f'optimal weights at {v_idx}: {opt_result["weights"]}')
+            
+            
             if opt_result['status'] == 'optimal':
                 portfolios_list.append({
                     'date': v_date, 'weights': opt_result['weights'],
@@ -470,9 +477,10 @@ def run_ccpo_rolling_counts(
             'status': 'optimal',
             # Optionally include calibration stats if needed for window summary
             'coverage_calib': mean_coverage_calib,
-            'radius': radius,
+            'radius': radius_seq,
             'calibration_time': calibration_time,
-            'optimization_time': optimization_time
+            'optimization_time': optimization_time,
+            'cov_matrix': cov_matrix
         }
 
     except Exception as e:
@@ -569,7 +577,7 @@ def run_ccpo_rolling_dates(
             criterion=cfg.CCPO.CRITERION
         )
 
-        conformal_predictor.fit_bootstrap_models_online_multistep(
+        results = conformal_predictor.fit_bootstrap_models_online_multistep(
             B=cfg.CCPO.B, batch_size=cfg.CCPO.BATCH_SIZE, EPOCHS=cfg.CCPO.EPOCHS,
             lr=cfg.CCPO.LEARNING_RATE, path=cfg.CCPO.WEIGHTS_PATH,
             patience=cfg.CCPO.PATIENCE, valid_mode=True
@@ -595,43 +603,45 @@ def run_ccpo_rolling_dates(
         start_time_opt = time.time()
         portfolios_list = []
 
-        full_returns_raw = loader.resample_frequency(loader.raw_data, cfg.FREQUENCY)
-        full_returns_values = full_returns_raw.values
-        full_returns_dates = full_returns_raw.index
+        mu_pred_raw = results["test"]["y_pred"].squeeze(1).cpu().numpy()
+        
+        # full_returns_raw = loader.resample_frequency(loader.raw_data, cfg.FREQUENCY)
+        # full_returns_values = full_returns_raw.values
+        # full_returns_dates = full_returns_raw.index
 
-        if len(V_dates) == 0:
-             print("Note: No V periods to optimize for.")
+        # if len(V_dates) == 0:
+        #      print("Note: No V periods to optimize for.")
 
         for v_idx, v_date in enumerate(V_dates):
-            try:
-                date_idx = full_returns_dates.get_loc(v_date)
-            except KeyError:
-                date_idx = full_returns_dates.get_indexer([v_date], method='nearest')[0]
-                print(f"      Warning: Date {v_date.date()} not found exactly, using nearest: {full_returns_dates[date_idx].date()}")
+            # try:
+            #     date_idx = full_returns_dates.get_loc(v_date)
+            # except KeyError:
+            #     date_idx = full_returns_dates.get_indexer([v_date], method='nearest')[0]
+            #     print(f"      Warning: Date {v_date.date()} not found exactly, using nearest: {full_returns_dates[date_idx].date()}")
 
-            if date_idx < lookback:
-                print(f"      ⚠️  Skipping {v_date.date()}: not enough history ({date_idx} < {lookback})")
-                continue
+            # if date_idx < lookback:
+            #     print(f"      ⚠️  Skipping {v_date.date()}: not enough history ({date_idx} < {lookback})")
+            #     continue
 
-            X_test_raw = full_returns_values[date_idx - lookback: date_idx]
-            if scaler: X_test_scaled = scaler.transform(X_test_raw)
-            else: X_test_scaled = X_test_raw
-            X_test_tensor = torch.FloatTensor(X_test_scaled).unsqueeze(0).to(cfg.DEVICE)
+            # X_test_raw = full_returns_values[date_idx - lookback: date_idx]
+            # if scaler: X_test_scaled = scaler.transform(X_test_raw)
+            # else: X_test_scaled = X_test_raw
+            # X_test_tensor = torch.FloatTensor(X_test_scaled).unsqueeze(0).to(cfg.DEVICE)
 
-            predictions = []
-            with torch.no_grad():
-                for b in range(cfg.CCPO.B):
-                    model = conformal_predictor.models[b]
-                    model.eval()
-                    pred_scaled = model(X_test_tensor)
-                    if pred_scaled.ndim == 3 and pred_scaled.shape[1] == 1: pred_scaled = pred_scaled.squeeze(1)
-                    predictions.append(pred_scaled)
+            # predictions = []
+            # with torch.no_grad():
+            #     for b in range(cfg.CCPO.B):
+            #         model = conformal_predictor.models[b]
+            #         model.eval()
+            #         pred_scaled = model(X_test_tensor)
+            #         if pred_scaled.ndim == 3 and pred_scaled.shape[1] == 1: pred_scaled = pred_scaled.squeeze(1)
+            #         predictions.append(pred_scaled)
 
-            mean_pred_scaled = torch.stack(predictions).mean(dim=0)
-            mu_pred_raw = scaler.inverse_transform(mean_pred_scaled.cpu().numpy()).flatten()
+            # mean_pred_scaled = torch.stack(predictions).mean(dim=0)
+            # mu_pred_raw = scaler.inverse_transform(mean_pred_scaled.cpu().numpy()).flatten()
 
             opt_result = optimizer.optimize_portfolio_socp(
-                mu_hat=mu_pred_raw, cov_matrix=cov_matrix, radius=radius_seq[v_idx],
+                mu_hat=mu_pred_raw[v_idx], cov_matrix=cov_matrix, radius=radius_seq[v_idx],
                 gamma=cfg.CCPO.GAMMA, formulation=cfg.CCPO.FORMULATION
             )
 
@@ -658,7 +668,8 @@ def run_ccpo_rolling_dates(
             'coverage_calib': mean_coverage_calib,
             'radius': radius_seq[v_idx],
             'calibration_time': calibration_time,
-            'optimization_time': optimization_time
+            'optimization_time': optimization_time,
+            'cov_matrix': cov_matrix
         }
 
     except Exception as e:

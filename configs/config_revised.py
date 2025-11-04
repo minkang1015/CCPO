@@ -35,7 +35,7 @@ LEN_V = 260        # The number of Model Test(V) Sequences
 
 # EVALUATION_MODE = "rolling" 
 class ROLLING:
-    WINDOW_TYPE = "sliding"   # ["sliding", "expanding"]
+    WINDOW_TYPE = "expanding"   # ["sliding", "expanding"]
 
     # --- 'counts' Mode Rolling Configuration ---
     class COUNTS:

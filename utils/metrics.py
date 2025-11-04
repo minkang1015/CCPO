@@ -70,7 +70,7 @@ def calculate_calmar_ratio(returns: np.ndarray, periods_per_year: int = 252) -> 
         
     return annualized_return / abs(max_drawdown)
 
-def calculate_turnover(weights_history) -> float:
+def calculate_turnover(weights_history) -> List:
     """
     Calculate average portfolio turnover
     
@@ -92,7 +92,7 @@ def calculate_turnover(weights_history) -> float:
         turnover = np.sum(np.abs(weights_history[i] - weights_history[i-1]))
         turnovers.append(turnover)
     
-    return np.mean(turnovers)
+    return turnovers
 
 def calculate_var_cvar(returns: np.ndarray, confidence_level: float = 0.95) -> Tuple[float, float]:
     """
@@ -113,6 +113,22 @@ def calculate_var_cvar(returns: np.ndarray, confidence_level: float = 0.95) -> T
     
     return var, cvar
 
+
+def calculate_transaction_cost(weights_history: np.ndarray) -> np.ndarray:
+    turnovers = calculate_turnover(weights_history)
+    transaction_cost = turnovers * 0.002
+
+    return transaction_cost
+
+def calculate_net_returns(returns: np.ndarray, weights_history) -> np.ndarray:
+    transaction_cost = np.asarray(calculate_transaction_cost(weights_history), dtype=float)
+    returns = np.asarray(returns, dtype=float)
+    
+    net_returns = (1.0 + returns) * (1.0- transaction_cost) - 1.0
+    
+    return net_returns
+    
+    ### Use net returns for calculating portfolio metrics which includes transaction cost.
 
 def calculate_portfolio_metrics(portfolio, 
                                 periods_per_year: int = 252,
@@ -157,7 +173,7 @@ def calculate_portfolio_metrics(portfolio,
     metrics['max_drawdown'] = calculate_max_drawdown(returns)
     metrics['sortino_ratio'] = calculate_sortino_ratio(returns, risk_free_rate, periods_per_year)
     metrics['calmar_ratio'] = calculate_calmar_ratio(returns, periods_per_year)
-    metrics['turnover'] = calculate_turnover(weights)
+    metrics['turnover'] = np.mean(calculate_turnover(weights))
     metrics['VaR'], metrics['CVaR'] = calculate_var_cvar(returns, confidence_level=0.95)
     
     # Computational metrics

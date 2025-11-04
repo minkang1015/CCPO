@@ -61,107 +61,49 @@ def run_rolling_evaluation(
 
         window_definitions = []
 
-        # if cfg.MODE == "counts":
-        #     cfg_roll_cnt = cfg.ROLLING.COUNTS
-        #     print(f"\nRolling Config (counts):")
-        #     print(f"  TrainLen={cfg_roll_cnt.MODEL_TRAIN_LEN}, KLen={cfg_roll_cnt.K_LEN}, VLen={cfg_roll_cnt.V_LEN}, Step={cfg_roll_cnt.STEP_SIZE}")
-
-        #     train_raw_len = lookback + cfg_roll_cnt.MODEL_TRAIN_LEN
-        #     k_raw_len = cfg_roll_cnt.K_LEN
-        #     v_raw_len = cfg_roll_cnt.V_LEN
-        #     total_window_raw_len = train_raw_len + k_raw_len + v_raw_len
-        #     step_size = cfg_roll_cnt.STEP_SIZE
-
-        #     current_raw_start_idx = 0
-        #     while True:
-        #         train_start_idx = current_raw_start_idx
-        #         train_end_idx = train_start_idx + train_raw_len
-        #         k_end_idx = train_end_idx + k_raw_len
-        #         v_end_idx = k_end_idx + v_raw_len
-
-        #         if v_end_idx > total_len:
-        #             print("\n--- Reached end of data (counts). Stopping. ---")
-        #             break
-
-        #         if train_end_idx <= train_start_idx or k_end_idx <= train_end_idx or v_end_idx <= k_end_idx:
-        #             print(f"--- Skipping window starting at {train_start_idx}: Invalid lengths (Train={train_raw_len}, K={k_raw_len}, V={v_raw_len}). ---")
-        #             current_raw_start_idx += step_size
-        #             continue
-
-        #         window_definitions.append({
-        #             "mode": "counts",
-        #             "train_start_idx": train_start_idx,
-        #             "train_len": cfg_roll_cnt.MODEL_TRAIN_LEN,
-        #             "K_len": cfg_roll_cnt.K_LEN,
-        #             "V_len": cfg_roll_cnt.V_LEN,
-        #             "k_start_raw_idx": train_end_idx,
-        #             "k_end_raw_idx": k_end_idx,
-        #             "v_start_raw_idx": k_end_idx,
-        #             "v_end_raw_idx": v_end_idx,
-        #         })
-
-        #         if cfg_roll.WINDOW_TYPE in ["sliding"]:
-        #             current_raw_start_idx += step_size
-        #         elif cfg_roll.WINDOW_TYPE in ["expanding"]:
-        #             current_raw_start_idx = current_raw_start_idx
-        #         else:
-        #             raise ValueError(f"Unknown ROLLING.WINDOW_TYPE: {cfg_roll.WINDOW_TYPE}")
-        
-        
-        
         if cfg.MODE == "counts":
             cfg_roll_cnt = cfg.ROLLING.COUNTS
             print(f"\nRolling Config (counts):")
-            print(f"  TrainLen (Initial/Sliding)={cfg_roll_cnt.MODEL_TRAIN_LEN}, KLen={cfg_roll_cnt.K_LEN}, VLen={cfg_roll_cnt.V_LEN}, Step={cfg_roll_cnt.STEP_SIZE}")
+            print(f"  TrainLen={cfg_roll_cnt.MODEL_TRAIN_LEN}, KLen={cfg_roll_cnt.K_LEN}, VLen={cfg_roll_cnt.V_LEN}, Step={cfg_roll_cnt.STEP_SIZE}")
 
-            initial_train_len = cfg_roll_cnt.MODEL_TRAIN_LEN
-            initial_train_raw_len = lookback + initial_train_len
+            train_raw_len = lookback + cfg_roll_cnt.MODEL_TRAIN_LEN
             k_raw_len = cfg_roll_cnt.K_LEN
             v_raw_len = cfg_roll_cnt.V_LEN
+            total_window_raw_len = train_raw_len + k_raw_len + v_raw_len
             step_size = cfg_roll_cnt.STEP_SIZE
 
-            fixed_train_start_idx = 0
-            current_k_start_idx = fixed_train_start_idx + initial_train_raw_len
-
+            current_raw_start_idx = 0
             while True:
-                k_end_idx = current_k_start_idx + k_raw_len
+                train_start_idx = current_raw_start_idx
+                train_end_idx = train_start_idx + train_raw_len
+                k_end_idx = train_end_idx + k_raw_len
                 v_end_idx = k_end_idx + v_raw_len
-                
+
                 if v_end_idx > total_len:
                     print("\n--- Reached end of data (counts). Stopping. ---")
                     break
-                
-                if cfg_roll.WINDOW_TYPE == "expanding":
-                    train_start_idx = fixed_train_start_idx
-                    train_end_idx = current_k_start_idx
-                    current_train_len = train_end_idx - train_start_idx - lookback
 
-                elif cfg_roll.WINDOW_TYPE == "sliding":
-                    current_train_len = initial_train_len           
-                    train_end_idx = current_k_start_idx
-                    train_start_idx = train_end_idx - (lookback + current_train_len) 
-                else:
-                    raise ValueError(f"Unknown ROLLING.WINDOW_TYPE: {cfg_roll.WINDOW_TYPE}")
-
-
-                if current_train_len <= 0 or k_raw_len <= 0 or v_raw_len <= 0:
-                    print(f"--- Skipping window K_start={current_k_start_idx}: Invalid lengths (Train={current_train_len}, K={k_raw_len}, V={v_raw_len}). ---")
-                    current_k_start_idx += step_size
+                if train_end_idx <= train_start_idx or k_end_idx <= train_end_idx or v_end_idx <= k_end_idx:
+                    print(f"--- Skipping window starting at {train_start_idx}: Invalid lengths (Train={train_raw_len}, K={k_raw_len}, V={v_raw_len}). ---")
+                    current_raw_start_idx += step_size
                     continue
 
                 window_definitions.append({
-                                    "mode": "counts",
-                                    "train_start_idx": train_start_idx,
-                                    "train_len": current_train_len,
-                                    "K_len": cfg_roll_cnt.K_LEN,
-                                    "V_len": cfg_roll_cnt.V_LEN,
-                                    "k_start_raw_idx": current_k_start_idx,
-                                    "k_end_raw_idx": k_end_idx,
-                                    "v_start_raw_idx": k_end_idx,
-                                    "v_end_raw_idx": v_end_idx,
-                                    })
+                    "mode": "counts",
+                    "train_start_idx": train_start_idx,
+                    "train_len": cfg_roll_cnt.MODEL_TRAIN_LEN,
+                    "K_len": cfg_roll_cnt.K_LEN,
+                    "V_len": cfg_roll_cnt.V_LEN,
+                    "k_start_raw_idx": train_end_idx,
+                    "k_end_raw_idx": k_end_idx,
+                    "v_start_raw_idx": k_end_idx,
+                    "v_end_raw_idx": v_end_idx,
+                })
 
-                current_k_start_idx += step_size
+                if cfg_roll.WINDOW_TYPE in ["sliding", "expanding"]:
+                    current_raw_start_idx += step_size
+                else:
+                    raise ValueError(f"Unknown ROLLING.WINDOW_TYPE: {cfg_roll.WINDOW_TYPE}")
 
         elif cfg.MODE == "dates":
             cfg_roll_dt = cfg.ROLLING.DATES
@@ -313,32 +255,26 @@ def run_rolling_evaluation(
                 result = window_results.get(method)
                 
                 if result and result.get('status') == 'optimal' and method == 'CCPO-CCO':
-                    portfolio_item_list = result.get('portfolios', [])    
-                    solve_time = (result['calibration_time'] + result['optimization_time']) / len(portfolio_item_list)
+                    portfolio = result['portfolios']
                     
+                    for portfolio_item in portfolio:
+                        weights = portfolio_item.get('weights')
+                        threshold = portfolio_item.get('threshold')
+                        
+                    solve_time = result['calibration_time'] + result['optimization_time']
                     
-                    added_count = 0
-                    skipped_count = 0
-                    print(f'len of portfolio item list: {len(portfolio_item_list)}')
-                    for v_idx, item in enumerate(portfolio_item_list):
-                        date = item['date']
-                        weights = item.get('weights')
-                        threshold = item.get('threshold')
-                    
-                    
-                        if weights is not None:
-                            asset_ret_raw = V_returns_raw[v_idx]
+                    if weights is not None:
+                        for date, asset_ret_raw in zip(V_dates, V_returns_raw):
                             portfolios[method].add_period(
                                 date=date, weight=weights,
                                 realized_return=float(weights @ asset_ret_raw),
                                 solve_time=solve_time / len(V_dates) if len(V_dates) > 0 else 0.0,
                                 threshold_post=threshold,
-                                )
-                            added_count += 1
-                        else:
-                            skipped_count += 1
-                                                        
-                    print(f"    Method '{method}': Added {added_count} periods. of {len(V_dates)} periods")
+                            )
+                        print(f"    Method '{method}': Added {len(V_dates)} periods.")
+                    else:
+                        print(f"    Method '{method}': Skipped (no weights).")                            
+                    
                                  
                 elif result and result.get('status') == 'optimal' and method != 'CCPO-CCO':
                     weights = result.get('weights')
