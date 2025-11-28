@@ -75,8 +75,7 @@ class TimeSeriesDataLoader:
             return data
 
         elif frequency == 'weekly':
-            # 'W-FRI' (금요일 기준)으로 리샘플링하고, 빈 값(NaN)은 제거
-            resampled = data.resample('W-FRI').last().dropna()
+            resampled = (1+data).resample('W-FRI').prod() - 1
 
         else:
             raise ValueError("frequency must be 'daily' or 'weekly'")
@@ -466,3 +465,194 @@ class TimeSeriesDataLoader:
             )
         else:
             raise ValueError("mode must be 'counts' or 'dates'")
+        
+class SimpleTimeSeriesDataLoader(TimeSeriesDataLoader):
+    """
+    Data Loader for 2-Split Mode: Train(K) / Test(V).
+    - The 'Train' split is used for both Model Training and Calibration(K).
+    - No separate Validation split.
+    """
+
+    def create_2split_by_counts(
+        self,
+        lookback: int,
+        k_len: int,  # Length for Train(K)
+        v_len: int,  # Length for Test(V)
+        start_idx: int = 0,
+        batch_size: int = 32,
+        shuffle_train: bool = True,
+        use_scaler: bool = True,
+    ) -> Dict[str, object]:
+        
+        # 1. Prepare Data
+        if self.raw_data is None: self.load_data()
+        data_to_use = self.data if self.data is not None else self.raw_data
+
+        total_len = k_len + v_len
+        total_raw_needed = lookback + total_len
+        end_idx = start_idx + total_raw_needed
+
+        # Check data availability
+        if end_idx > len(data_to_use):
+            raise ValueError(f"Not enough data. Needed {total_raw_needed}, available {len(data_to_use)-start_idx}")
+
+        # 2. Slicing Window
+        window_df = data_to_use.iloc[start_idx:end_idx]
+        
+        # 3. Fit Scaler (Fit ONLY on Train(K) part)
+        if use_scaler:
+            fit_df = window_df.iloc[: (lookback + k_len)]
+            self.fit_scaler(fit_df)
+
+        scaled_df = self.transform(window_df)
+        X_all, y_all, dates_all = self.create_sequences(scaled_df, lookback=lookback)
+        
+        # Raw Data (for Optimization / Calibration)
+        _, y_raw, dates_raw = self.create_sequences(window_df, lookback=lookback)
+        
+        dates_all = pd.to_datetime(dates_all)
+        dates_raw = pd.to_datetime(dates_raw)
+
+        # 5. Split into Train(K) and Test(V)
+        k_slice = slice(0, k_len)
+        v_slice = slice(k_len, total_len)
+
+        # Model Data
+        X_k, y_k = X_all[k_slice], y_all[k_slice]
+        X_v, y_v = X_all[v_slice], y_all[v_slice]
+        d_k = dates_all[k_slice]
+        d_v = dates_all[v_slice]
+
+        # Optimization Data (Raw)
+        y_opt_k = y_raw[k_slice]
+        y_opt_v = y_raw[v_slice]
+        d_opt_k = dates_raw[k_slice]
+        d_opt_v = dates_raw[v_slice]
+
+        # 6. Create Loaders
+        train_loader = DataLoader(TimeSeriesDataset(X_k, y_k, unsqueeze_y=True), batch_size=batch_size, shuffle=shuffle_train)
+        test_loader  = DataLoader(TimeSeriesDataset(X_v, y_v, unsqueeze_y=True), batch_size=batch_size, shuffle=False)
+        
+        print(f"\n[2-Split Mode] Counts Split Result:")
+        print(f"Train(K): {len(X_k)} sequences ({d_k[0].date()} ~ {d_k[-1].date()})")
+        print(f"Test(V) : {len(X_v)} sequences ({d_v[0].date()} ~ {d_v[-1].date()})")
+
+        return {
+            "model": {
+                "train_loader": train_loader,
+                "valid_loader": None,  # No separate validation set
+                "test_loader":  test_loader,
+                "dates": {"train": d_k, "valid": None, "test": d_v},
+            },
+            "opt": {
+                "y_K": y_opt_k, "dates_K": d_opt_k,
+                "y_V": y_opt_v, "dates_V": d_opt_v,
+            },
+            "scaler": self.scaler,
+        }
+
+    def create_2split_by_dates(
+        self,
+        lookback: int,
+        k_end_date: str, # End date for Train(K)
+        v_end_date: str, # End date for Test(V)
+        batch_size: int = 32,
+        shuffle_train: bool = True,
+        use_scaler: bool = True,
+        train_start_date: Optional[str] = None,
+    ) -> Dict[str, object]:
+        
+        if self.raw_data is None: self.load_data()
+        data_to_use = self.data if self.data is not None else self.raw_data
+
+        k_end = pd.to_datetime(k_end_date)
+        v_end = pd.to_datetime(v_end_date)
+        
+        # Determine Start Date
+        if train_start_date:
+            start_date = pd.to_datetime(train_start_date)
+        else:
+            start_date = data_to_use.index[0]
+
+        # 1. Fit Scaler (Fit ONLY on Train(K) part)
+        if use_scaler:
+            # Fit on data from start_date up to k_end
+            fit_mask = (data_to_use.index >= start_date) & (data_to_use.index <= k_end)
+            fit_df = data_to_use[fit_mask]
+            self.fit_scaler(fit_df)
+
+        # 2. Sequence Creation
+        filtered_data = data_to_use[data_to_use.index >= start_date]
+        
+        # Model Data (Scaled)
+        scaled_data = self.transform(filtered_data)
+        X_s, y_s, dates = self.create_sequences(scaled_data, lookback)
+        
+        # Opt Data (Raw)
+        _, y_raw, dates_raw = self.create_sequences(filtered_data, lookback)
+        
+        dates = pd.to_datetime(dates)
+        dates_raw = pd.to_datetime(dates_raw)
+        
+        # 3. Create Masks
+        k_mask = (dates <= k_end)
+        v_mask = (dates > k_end) & (dates <= v_end)
+
+        # 4. Split
+        X_k, y_k = X_s[k_mask], y_s[k_mask]
+        X_v, y_v = X_s[v_mask], y_s[v_mask]
+        
+        y_opt_k = y_raw[k_mask]
+        y_opt_v = y_raw[v_mask]
+        
+        # 5. Loaders
+        train_loader = DataLoader(TimeSeriesDataset(X_k, y_k, unsqueeze_y=True), batch_size=batch_size, shuffle=shuffle_train)
+        test_loader  = DataLoader(TimeSeriesDataset(X_v, y_v, unsqueeze_y=True), batch_size=batch_size, shuffle=False)
+
+        print(f"\n[2-Split Mode] Dates Split Result:")
+        print(f"Train(K): ~ {k_end.date()} ({len(X_k)} seqs)")
+        print(f"Test(V) : ~ {v_end.date()} ({len(X_v)} seqs)")
+
+        return {
+            "model": {
+                "train_loader": train_loader,
+                "valid_loader": None,
+                "test_loader":  test_loader,
+                "dates": {"train": dates[k_mask], "valid": None, "test": dates[v_mask]},
+            },
+            "opt": {
+                "y_K": y_opt_k, "dates_K": dates_raw[k_mask],
+                "y_V": y_opt_v, "dates_V": dates_raw[v_mask],
+            },
+            "scaler": self.scaler,
+        }
+
+    # Override the wrapper to route to new methods
+    def create_all(self, mode: Literal["counts", "dates"], **kwargs):
+        # Handle resampling frequency
+        frequency = kwargs.get("resample_freq", 'daily')
+        if self.raw_data is None: self.load_data()
+        self.resample_frequency(self.raw_data, frequency)
+
+        if mode == "counts":
+            return self.create_2split_by_counts(
+                lookback=kwargs["lookback"],
+                k_len=kwargs["K"],   
+                v_len=kwargs["V"],   
+                start_idx=kwargs.get("start_idx", 0),
+                batch_size=kwargs.get("batch_size", 32),
+                shuffle_train=kwargs.get("shuffle_train", True),
+                use_scaler=kwargs.get("use_scaler", True),
+            )
+        elif mode == "dates":
+            return self.create_2split_by_dates(
+                lookback=kwargs["lookback"],
+                k_end_date=kwargs["k_end_date"], 
+                v_end_date=kwargs["v_end_date"], 
+                train_start_date=kwargs.get("train_start_date"),
+                batch_size=kwargs.get("batch_size", 32),
+                shuffle_train=kwargs.get("shuffle_train", True),
+                use_scaler=kwargs.get("use_scaler", True),
+            )
+        else:
+            raise ValueError("Mode must be 'counts' or 'dates'")

@@ -18,33 +18,53 @@ def run_rolling_evaluation(
     cfg: config = config
 ):
     """
-    Rolling window evaluation (Sliding or Expanding) based on config diagram.
-    Splits into distinct Train / K (Calib) / V (Test) periods.
+    Rolling window evaluation supporting both 3-Split (Train/K/V) and 2-Split (Train(K)/V).
+    Refers to specific config sections: cfg.ROLLING.SPLIT_3 or cfg.ROLLING.SPLIT_2
     """
     frequency = frequency or cfg.FREQUENCY
     lookback = lookback or cfg.LOOKBACK
     alpha = alpha or cfg.ALPHA
-    cfg_roll = cfg.ROLLING
+    
+    # Check Split Mode
+    split_mode = getattr(cfg, "SPLIT_MODE", "3_split")
 
+    if split_mode == "2_split":
+        if cfg.MODE == "counts":
+            k_info = f"TrK{cfg.ROLLING.SPLIT_2.COUNTS.TRAIN_K_LEN}" # Train+K merged len
+            v_info = f"V{cfg.ROLLING.SPLIT_2.COUNTS.V_LEN}"
+        else: # dates
+            k_info = f"TrK{cfg.ROLLING.SPLIT_2.DATES.K_PERIOD_OFFSET}"
+            v_info = f"V{cfg.ROLLING.SPLIT_2.DATES.V_PERIOD_OFFSET}"
+    else: # 3_split (default)
+        if cfg.MODE == "counts":
+            k_info = f"K{cfg.ROLLING.SPLIT_3.COUNTS.K_LEN}"
+            v_info = f"V{cfg.ROLLING.SPLIT_3.COUNTS.V_LEN}"
+        else: # dates
+            k_info = f"K{cfg.ROLLING.SPLIT_3.DATES.K_PERIOD_OFFSET}"
+            v_info = f"V{cfg.ROLLING.SPLIT_3.DATES.V_PERIOD_OFFSET}"
+    
+    
     timestamp = datetime.now().strftime("%m%d%H%M")
     result_folder = os.path.join(
         os.path.dirname(__file__),
         "..", "results",
-        f"run_rolling_{cfg_roll.WINDOW_TYPE}_{cfg.MODE}_{timestamp}"
+        f"run_rolling_{cfg.ROLLING.WINDOW_TYPE}_{cfg.MODE}_{split_mode}_{alpha}_{cfg.NUM_ASSETS}_assets_{cfg.SEED}_{k_info}K_{v_info}V"
     )
     os.makedirs(result_folder, exist_ok=True)
 
     log_file = os.path.join(result_folder, "rolling_log.txt")
     logger = DirectLogger(log_file)
-    logger.log_header(title=f"Rolling Evaluation ({cfg_roll.WINDOW_TYPE} / {cfg.MODE})")
+    logger.log_header(title=f"Rolling Evaluation ({cfg.ROLLING.WINDOW_TYPE} / {cfg.MODE} / {split_mode})")
 
     original_stdout = sys.stdout
     sys.stdout = logger
 
     try:
-        print(f"🎯 Rolling Window Evaluation ({cfg_roll.WINDOW_TYPE} / {cfg.MODE})")
-        print(f"  Frequency: {frequency}, Lookback: {lookback}, Alpha: {alpha}")
+        print(f"🎯 Rolling Window Evaluation ({cfg.ROLLING.WINDOW_TYPE} / {cfg.MODE})")
+        print(f"   Split Mode: {split_mode}")
+        print(f"   Frequency: {frequency}, Lookback: {lookback}, Alpha: {alpha}")
 
+        # Load Full Data
         loader = TimeSeriesDataLoader(base_path=cfg.DATA_PATH, num_assets=cfg.NUM_ASSETS)
         loader.load_data()
         full_data_resampled = loader.resample_frequency(loader.raw_data, frequency)
@@ -53,6 +73,7 @@ def run_rolling_evaluation(
         print(f"\nFull data loaded: {total_len} periods, {n_assets} assets")
         print(f"  [{full_data_resampled.index.min().date()} ~ {full_data_resampled.index.max().date()}]")
 
+        # Setup Methods
         cpp_methods = cfg.CPP.METHODS
         ccpo_methods = ["CCPO-CCO"]
         baseline_methods = ["Equal-Weight"]
@@ -61,202 +82,209 @@ def run_rolling_evaluation(
 
         window_definitions = []
 
-        # if cfg.MODE == "counts":
-        #     cfg_roll_cnt = cfg.ROLLING.COUNTS
-        #     print(f"\nRolling Config (counts):")
-        #     print(f"  TrainLen={cfg_roll_cnt.MODEL_TRAIN_LEN}, KLen={cfg_roll_cnt.K_LEN}, VLen={cfg_roll_cnt.V_LEN}, Step={cfg_roll_cnt.STEP_SIZE}")
-
-        #     train_raw_len = lookback + cfg_roll_cnt.MODEL_TRAIN_LEN
-        #     k_raw_len = cfg_roll_cnt.K_LEN
-        #     v_raw_len = cfg_roll_cnt.V_LEN
-        #     total_window_raw_len = train_raw_len + k_raw_len + v_raw_len
-        #     step_size = cfg_roll_cnt.STEP_SIZE
-
-        #     current_raw_start_idx = 0
-        #     while True:
-        #         train_start_idx = current_raw_start_idx
-        #         train_end_idx = train_start_idx + train_raw_len
-        #         k_end_idx = train_end_idx + k_raw_len
-        #         v_end_idx = k_end_idx + v_raw_len
-
-        #         if v_end_idx > total_len:
-        #             print("\n--- Reached end of data (counts). Stopping. ---")
-        #             break
-
-        #         if train_end_idx <= train_start_idx or k_end_idx <= train_end_idx or v_end_idx <= k_end_idx:
-        #             print(f"--- Skipping window starting at {train_start_idx}: Invalid lengths (Train={train_raw_len}, K={k_raw_len}, V={v_raw_len}). ---")
-        #             current_raw_start_idx += step_size
-        #             continue
-
-        #         window_definitions.append({
-        #             "mode": "counts",
-        #             "train_start_idx": train_start_idx,
-        #             "train_len": cfg_roll_cnt.MODEL_TRAIN_LEN,
-        #             "K_len": cfg_roll_cnt.K_LEN,
-        #             "V_len": cfg_roll_cnt.V_LEN,
-        #             "k_start_raw_idx": train_end_idx,
-        #             "k_end_raw_idx": k_end_idx,
-        #             "v_start_raw_idx": k_end_idx,
-        #             "v_end_raw_idx": v_end_idx,
-        #         })
-
-        #         if cfg_roll.WINDOW_TYPE in ["sliding"]:
-        #             current_raw_start_idx += step_size
-        #         elif cfg_roll.WINDOW_TYPE in ["expanding"]:
-        #             current_raw_start_idx = current_raw_start_idx
-        #         else:
-        #             raise ValueError(f"Unknown ROLLING.WINDOW_TYPE: {cfg_roll.WINDOW_TYPE}")
+        # ==============================================================================
+        # WINDOW GENERATION LOGIC
+        # ==============================================================================
         
-        
-        
-        if cfg.MODE == "counts":
-            cfg_roll_cnt = cfg.ROLLING.COUNTS
-            print(f"\nRolling Config (counts):")
-            print(f"  TrainLen (Initial/Sliding)={cfg_roll_cnt.MODEL_TRAIN_LEN}, KLen={cfg_roll_cnt.K_LEN}, VLen={cfg_roll_cnt.V_LEN}, Step={cfg_roll_cnt.STEP_SIZE}")
-
-            initial_train_len = cfg_roll_cnt.MODEL_TRAIN_LEN
-            initial_train_raw_len = lookback + initial_train_len
-            k_raw_len = cfg_roll_cnt.K_LEN
-            v_raw_len = cfg_roll_cnt.V_LEN
-            step_size = cfg_roll_cnt.STEP_SIZE
-
-            fixed_train_start_idx = 0
-            current_k_start_idx = fixed_train_start_idx + initial_train_raw_len
-
-            while True:
-                k_end_idx = current_k_start_idx + k_raw_len
-                v_end_idx = k_end_idx + v_raw_len
+        # ---------------------
+        # CASE A: 2-SPLIT (Train(K) -> Test(V))
+        # ---------------------
+        if split_mode == "2_split":
+            cfg_roll = cfg.ROLLING.SPLIT_2  # Load 2-Split Rolling Config
+            print(f"\n[2-Split Mode] Generating windows where Train == K...")
+            
+            if cfg.MODE == "counts":
+                k_len = cfg_roll.COUNTS.TRAIN_K_LEN
+                v_len = cfg_roll.COUNTS.V_LEN
+                step_size = cfg_roll.COUNTS.STEP_SIZE
                 
-                if v_end_idx > total_len:
-                    print("\n--- Reached end of data (counts). Stopping. ---")
-                    break
+                print(f"  Train(K) Len: {k_len}, Test(V) Len: {v_len}, Step: {step_size}")
                 
-                if cfg_roll.WINDOW_TYPE == "expanding":
-                    train_start_idx = fixed_train_start_idx
-                    train_end_idx = current_k_start_idx
-                    current_train_len = train_end_idx - train_start_idx - lookback
+                # Raw index logic
+                current_idx = 0
+                while True:
+                    k_end_idx = current_idx + k_len + lookback 
+                    v_end_idx = k_end_idx + v_len
+                    
+                    if v_end_idx > total_len:
+                        break
+                        
+                    window_definitions.append({
+                        "mode": "counts",
+                        "split": "2_split",
+                        "k_start_raw_idx": current_idx, 
+                        "k_end_raw_idx": k_end_idx,     
+                        "v_start_raw_idx": k_end_idx,
+                        "v_end_raw_idx": v_end_idx,
+                        "train_len": k_len, 
+                        "K_len": 0,         
+                        "V_len": v_len
+                    })
+                    current_idx += step_size
+                    
+            elif cfg.MODE == "dates":
+                 k_period = cfg_roll.DATES.K_PERIOD_OFFSET 
+                 v_period = cfg_roll.DATES.V_PERIOD_OFFSET
+                 step_period = cfg_roll.DATES.STEP_OFFSET
+                 
+                 print(f"  Train(K) Period: {k_period}, Test(V) Period: {v_period}, Step: {step_period}")
+                 
+                 k_offset = pd.tseries.frequencies.to_offset(k_period)
+                 v_offset = pd.tseries.frequencies.to_offset(v_period)
+                 step_offset = pd.tseries.frequencies.to_offset(step_period)
+                 
+                 start_date = pd.to_datetime(cfg_roll.DATES.ROLLING_START_DATE)
+                 max_date = full_data_resampled.index[-1]
+                 
+                 current_start = start_date
+                 while True:
+                     k_end_date = current_start + k_offset
+                     v_end_date = k_end_date + v_offset
+                     
+                     if v_end_date > max_date:
+                         break
+                         
+                     window_definitions.append({
+                        "mode": "dates",
+                        "split": "2_split",
+                        "k_start_date": current_start,
+                        "k_end_date": k_end_date,
+                        "v_start_date": k_end_date,
+                        "v_end_date": v_end_date,
+                        "train_start_date": current_start,
+                        "train_end_date": k_end_date 
+                     })
+                     current_start += step_offset
 
-                elif cfg_roll.WINDOW_TYPE == "sliding":
-                    current_train_len = initial_train_len           
-                    train_end_idx = current_k_start_idx
-                    train_start_idx = train_end_idx - (lookback + current_train_len) 
-                else:
-                    raise ValueError(f"Unknown ROLLING.WINDOW_TYPE: {cfg_roll.WINDOW_TYPE}")
-
-
-                if current_train_len <= 0 or k_raw_len <= 0 or v_raw_len <= 0:
-                    print(f"--- Skipping window K_start={current_k_start_idx}: Invalid lengths (Train={current_train_len}, K={k_raw_len}, V={v_raw_len}). ---")
-                    current_k_start_idx += step_size
-                    continue
-
-                window_definitions.append({
-                                    "mode": "counts",
-                                    "train_start_idx": train_start_idx,
-                                    "train_len": current_train_len,
-                                    "K_len": cfg_roll_cnt.K_LEN,
-                                    "V_len": cfg_roll_cnt.V_LEN,
-                                    "k_start_raw_idx": current_k_start_idx,
-                                    "k_end_raw_idx": k_end_idx,
-                                    "v_start_raw_idx": k_end_idx,
-                                    "v_end_raw_idx": v_end_idx,
-                                    })
-
-                current_k_start_idx += step_size
-
-        elif cfg.MODE == "dates":
-            cfg_roll_dt = cfg.ROLLING.DATES
-            print(f"\nRolling Config (dates):")
-            print(f"  Train Offset={cfg_roll_dt.MODEL_TRAIN_OFFSET}, K Period={cfg_roll_dt.K_PERIOD_OFFSET}, V Period={cfg_roll_dt.V_PERIOD_OFFSET}, Step={cfg_roll_dt.STEP_OFFSET}")
-            print(f"  Rolling Start={cfg_roll_dt.ROLLING_START_DATE}, Rolling End={cfg_roll_dt.ROLLING_END_DATE}")
-
-            train_offset = pd.tseries.frequencies.to_offset(cfg_roll_dt.MODEL_TRAIN_OFFSET)
-            k_offset = pd.tseries.frequencies.to_offset(cfg_roll_dt.K_PERIOD_OFFSET)
-            v_offset = pd.tseries.frequencies.to_offset(cfg_roll_dt.V_PERIOD_OFFSET)
-            step_offset = pd.tseries.frequencies.to_offset(cfg_roll_dt.STEP_OFFSET)
-
-            first_possible_train_start = pd.to_datetime(cfg_roll_dt.ROLLING_START_DATE) if cfg_roll_dt.ROLLING_START_DATE else full_data_resampled.index[0]
-            last_possible_v_end = pd.to_datetime(cfg_roll_dt.ROLLING_END_DATE) if cfg_roll_dt.ROLLING_END_DATE else full_data_resampled.index[-1]
-
-            first_k_end = first_possible_train_start + train_offset + k_offset
-            first_v_start = first_k_end
-
-            current_v_start_date = first_v_start
-            while True:
-                v_end_date = current_v_start_date + v_offset
-                if v_end_date > last_possible_v_end + pd.Timedelta(days=1):
-                    print(f"\n--- Reached end date {last_possible_v_end.date()}. Stopping. ---")
-                    break
-
-                k_end_date = current_v_start_date
-                train_end_date = k_end_date - k_offset
-
-                if cfg_roll.WINDOW_TYPE == "expanding":
-                    train_start_date = first_possible_train_start
-                elif cfg_roll.WINDOW_TYPE == "sliding":
-                    train_start_date = train_end_date - train_offset
-                else:
-                    raise ValueError(f"Unknown ROLLING.WINDOW_TYPE: {cfg_roll.WINDOW_TYPE}")
-
-                min_data_date_for_seq = full_data_resampled.index[lookback]
-                if train_start_date < min_data_date_for_seq or train_end_date <= train_start_date or k_end_date <= train_end_date:
-                    print(f"--- Skipping window V=[{current_v_start_date.date()} ~ {v_end_date.date()}]: Insufficient history or invalid Train/K dates. ---")
-                    current_v_start_date += step_offset
-                    continue
-
-                window_definitions.append({
-                    "mode": "dates",
-                    "train_start_date": train_start_date,
-                    "train_end_date": train_end_date,
-                    "k_start_date": train_end_date,
-                    "k_end_date": k_end_date,
-                    "v_start_date": k_end_date,
-                    "v_end_date": v_end_date
-                })
-
-                current_v_start_date += step_offset
-
+        # ---------------------
+        # CASE B: 3-SPLIT (Train -> K -> V)
+        # ---------------------
         else:
-            raise ValueError(f"Unknown MODE: {cfg.MODE}")
+            cfg_roll = cfg.ROLLING.SPLIT_3  # Load 3-Split Rolling Config
+            print(f"\n[3-Split Mode] Generating windows (Train -> K -> V)...")
+
+            if cfg.MODE == "counts":
+                initial_train_len = cfg_roll.COUNTS.MODEL_TRAIN_LEN
+                k_raw_len = cfg_roll.COUNTS.K_LEN
+                v_raw_len = cfg_roll.COUNTS.V_LEN
+                step_size = cfg_roll.COUNTS.STEP_SIZE
+                
+                print(f"  Init Train: {initial_train_len}, K: {k_raw_len}, V: {v_raw_len}, Step: {step_size}")
+
+                initial_train_raw_len = lookback + initial_train_len
+                fixed_train_start_idx = 0
+                current_k_start_idx = fixed_train_start_idx + initial_train_raw_len
+
+                while True:
+                    k_end_idx = current_k_start_idx + k_raw_len
+                    v_end_idx = k_end_idx + v_raw_len
+                    
+                    if v_end_idx > total_len:
+                        break
+                    
+                    if cfg.ROLLING.WINDOW_TYPE == "expanding":
+                        train_start_idx = fixed_train_start_idx
+                        train_end_idx = current_k_start_idx
+                        current_train_len = train_end_idx - train_start_idx - lookback
+                    else: # sliding
+                        current_train_len = initial_train_len           
+                        train_end_idx = current_k_start_idx
+                        train_start_idx = train_end_idx - (lookback + current_train_len)
+
+                    window_definitions.append({
+                        "mode": "counts",
+                        "split": "3_split",
+                        "train_start_idx": train_start_idx,
+                        "train_len": current_train_len,
+                        "K_len": k_raw_len,
+                        "V_len": v_raw_len,
+                        "k_start_raw_idx": current_k_start_idx,
+                        "k_end_raw_idx": k_end_idx,
+                        "v_start_raw_idx": k_end_idx,
+                        "v_end_raw_idx": v_end_idx,
+                    })
+                    current_k_start_idx += step_size
+
+            elif cfg.MODE == "dates":
+                train_offset = pd.tseries.frequencies.to_offset(cfg_roll.DATES.MODEL_TRAIN_OFFSET)
+                k_offset = pd.tseries.frequencies.to_offset(cfg_roll.DATES.K_PERIOD_OFFSET)
+                v_offset = pd.tseries.frequencies.to_offset(cfg_roll.DATES.V_PERIOD_OFFSET)
+                step_offset = pd.tseries.frequencies.to_offset(cfg_roll.DATES.STEP_OFFSET)
+                
+                print(f"  Train Off: {train_offset}, K Off: {k_offset}, V Off: {v_offset}, Step: {step_offset}")
+
+                first_possible_train_start = pd.to_datetime(cfg_roll.DATES.ROLLING_START_DATE)
+                first_k_end = first_possible_train_start + train_offset + k_offset
+                first_v_start = first_k_end
+
+                current_v_start_date = first_v_start
+                while True:
+                    v_end_date = current_v_start_date + v_offset
+                    if v_end_date > full_data_resampled.index[-1] + pd.Timedelta(days=1):
+                        break
+
+                    k_end_date = current_v_start_date
+                    train_end_date = k_end_date - k_offset
+
+                    if cfg.ROLLING.WINDOW_TYPE == "expanding":
+                        train_start_date = first_possible_train_start
+                    else:
+                        train_start_date = train_end_date - train_offset
+
+                    window_definitions.append({
+                        "mode": "dates",
+                        "split": "3_split",
+                        "train_start_date": train_start_date,
+                        "train_end_date": train_end_date,
+                        "k_start_date": train_end_date,
+                        "k_end_date": k_end_date,
+                        "v_start_date": k_end_date,
+                        "v_end_date": v_end_date
+                    })
+                    current_v_start_date += step_offset
 
         print(f"\nTotal valid windows defined: {len(window_definitions)}")
 
+        # ==============================================================================
+        # MAIN LOOP
+        # ==============================================================================
         for i, window in enumerate(window_definitions):
             window_num = i + 1
-
             print(f"\n{'='*80}")
-            print(f"RUNNING WINDOW {window_num}/{len(window_definitions)} ({cfg_roll.WINDOW_TYPE} / {cfg.MODE})")
+            print(f"RUNNING WINDOW {window_num}/{len(window_definitions)} ({window['split']} / {cfg.MODE})")
 
+            # 1) Slice Data
             if window["mode"] == "counts":
-                k_start_idx, k_end_idx = window["k_start_raw_idx"], window["k_end_raw_idx"]
-                v_start_idx, v_end_idx = window["v_start_raw_idx"], window["v_end_raw_idx"]
-                K_data_raw = full_data_resampled.iloc[k_start_idx : k_end_idx]
-                V_data_raw = full_data_resampled.iloc[v_start_idx : v_end_idx]
-                train_s, train_e = window["train_start_idx"], window["k_start_raw_idx"]
                 k_s, k_e = window["k_start_raw_idx"], window["k_end_raw_idx"]
                 v_s, v_e = window["v_start_raw_idx"], window["v_end_raw_idx"]
-                print(f"  Raw Idx: Train=[{train_s}:{train_e}], K=[{k_s}:{k_e}], V=[{v_s}:{v_e}]")
-
-            else:
+                
+                K_data_raw = full_data_resampled.iloc[k_s : k_e]
+                V_data_raw = full_data_resampled.iloc[v_s : v_e]
+                
+                print(f"  Idx: K=[{k_s}:{k_e}], V=[{v_s}:{v_e}]")
+                if split_mode == "3_split":
+                    print(f"       Train=[{window['train_start_idx']}:{k_s}]")
+                
+            else: # dates
                 k_start, k_end = window["k_start_date"], window["k_end_date"]
                 v_start, v_end = window["v_start_date"], window["v_end_date"]
+                
                 K_data_raw = full_data_resampled.loc[k_start : k_end - pd.Timedelta(nanoseconds=1)]
                 V_data_raw = full_data_resampled.loc[v_start : v_end - pd.Timedelta(nanoseconds=1)]
-                train_s, train_e = window["train_start_date"], window["train_end_date"]
-                print(f"  Dates: Train=[{train_s.date()}~{train_e.date()}], K=[{k_start.date()}~{k_end.date()}], V=[{v_start.date()}~{v_end.date()}]")
+                
+                print(f"  Dates: K=[{k_start.date()} ~ {k_end.date()}], V=[{v_start.date()} ~ {v_end.date()}]")
+                if split_mode == "3_split":
+                    print(f"         Train=[{window['train_start_date'].date()} ~ {window['train_end_date'].date()}]")
 
             if K_data_raw.empty or V_data_raw.empty:
-                print(f"--- Skipping window {window_num}: Empty K or V data based on calculated boundaries. ---")
+                print("⚠️ Skipping empty window.")
                 continue
 
             K_returns_raw = K_data_raw.values
             V_returns_raw = V_data_raw.values
             V_dates = V_data_raw.index
 
-            print(f"  K(Calib) Period Data: {len(K_data_raw)} obs [{K_data_raw.index.min().date()} ~ {K_data_raw.index.max().date()}]")
-            print(f"  V(Test) Period Data: {len(V_data_raw)} obs [{V_dates.min().date()} ~ {V_dates.max().date()}]")
-            print(f"{'='*80}\n")
-
-            # 4.2) CPP 실행 (K 기간 데이터 사용)
+            # 2) Run CPP
             window_results = {}
             for cpp_method in cpp_methods:
                 cpp_res = run_cpp_direct(
@@ -268,19 +296,19 @@ def run_rolling_evaluation(
                 )
                 window_results[cpp_method] = cpp_res
 
-            # 4.3) CCPO for counts mode
+            # 3) Run CCPO
             if window["mode"] == "counts":
                 ccpo_res = run_ccpo_rolling_counts(
                     data_path=cfg.DATA_PATH, lookback=lookback, alpha=alpha,
                     model_train_len=window["train_len"],
-                    K_len=window["K_len"],
+                    K_len=window.get("K_len", 0), 
                     V_len=window["V_len"],
-                    start_idx=window["train_start_idx"],
+                    start_idx=window.get("train_start_idx", window["k_start_raw_idx"]), 
                     V_dates=V_dates,
                     V_returns_raw=V_returns_raw,
                     cfg=cfg
                 )
-            else:  # dates mode
+            else:
                 ccpo_res = run_ccpo_rolling_dates(
                     data_path=cfg.DATA_PATH, lookback=lookback, alpha=alpha,
                     train_start_date=window["train_start_date"],
@@ -292,83 +320,52 @@ def run_rolling_evaluation(
                 )
             window_results["CCPO-CCO"] = ccpo_res
 
-            # 4.4) Equal-Weight
-            print("  Running Equal-Weight...")
+            # 4) Equal-Weight
             if n_assets > 0:
                 equal_w = np.ones(n_assets) / n_assets
                 window_results["Equal-Weight"] = {
-                    'weights': equal_w,
-                    'threshold_post': None,
-                    'status': 'optimal',
-                    'solve_time': 0.0
+                    'weights': equal_w, 'threshold_post': None, 'status': 'optimal', 'solve_time': 0.0
                 }
-                print(f"    ✅ Completed.")
-            else:
-                window_results["Equal-Weight"] = {'status': 'skipped'}
-                print(f"    Skipped (no assets).")
 
-            # 4.5) 현 윈도우 결과를 전역 포트폴리오에 추가 (V 기간)
-            print("\n  Adding window results to portfolio logs...")
+            # 5) Aggregate to Portfolio
             for method in all_methods:
                 result = window_results.get(method)
-                
-                if result and result.get('status') == 'optimal' and method == 'CCPO-CCO':
-                    portfolio_item_list = result.get('portfolios', [])    
-                    solve_time = (result['calibration_time'] + result['optimization_time']) / len(portfolio_item_list)
+                if not result or result.get('status') != 'optimal':
+                    continue
                     
+                if method == 'CCPO-CCO':
+                    portfolio_item_list = result.get('portfolios', [])
+                    solve_time_avg = (result.get('optimization_time', 0.0)) / len(portfolio_item_list) if portfolio_item_list else 0.0
                     
-                    added_count = 0
-                    skipped_count = 0
-                    print(f'len of portfolio item list: {len(portfolio_item_list)}')
-                    for v_idx, item in enumerate(portfolio_item_list):
-                        date = item['date']
-                        weights = item.get('weights')
-                        threshold = item.get('threshold')
-                    
-                    
-                        if weights is not None:
-                            asset_ret_raw = V_returns_raw[v_idx]
-                            portfolios[method].add_period(
-                                date=date, weight=weights,
-                                realized_return=float(weights @ asset_ret_raw),
-                                solve_time=solve_time / len(V_dates) if len(V_dates) > 0 else 0.0,
-                                threshold_post=threshold,
-                                )
-                            added_count += 1
-                        else:
-                            skipped_count += 1
-                                                        
-                    print(f"    Method '{method}': Added {added_count} periods. of {len(V_dates)} periods")
-                                 
-                elif result and result.get('status') == 'optimal' and method != 'CCPO-CCO':
-                    weights = result.get('weights')
-                    threshold = result.get('threshold_post', result.get('threshold'))
-                    solve_time = result.get('solve_time', 0.0)
-                    
-                    if weights is not None:
-                        for date, asset_ret_raw in zip(V_dates, V_returns_raw):
-                            portfolios[method].add_period(
-                                date=date, weight=weights,
-                                realized_return=float(weights @ asset_ret_raw),
-                                solve_time=solve_time / len(V_dates) if len(V_dates) > 0 else 0.0,
-                                threshold_post=threshold,
-                            )
-                        print(f"    Method '{method}': Added {len(V_dates)} periods.")
-                    else:
-                        print(f"    Method '{method}': Skipped (no weights).")
+                    for i_p, item in enumerate(portfolio_item_list):
+                         if i_p < len(V_dates):
+                             d = V_dates[i_p]
+                             w = item['weights']
+                             if w is not None:
+                                 portfolios[method].add_period(
+                                     date=d, weight=w,
+                                     realized_return=float(w @ V_returns_raw[i_p]),
+                                     solve_time=solve_time_avg,
+                                     threshold_post=item.get('threshold')
+                                 )
                 else:
-                    status = result.get('status') if isinstance(result, dict) else 'error'
-                    print(f"    Method '{method}': Skipped (status: {status}).")
-                    
-        # 5) Aggregate all results for whole rolling periods
+                    w = result.get('weights')
+                    if w is not None:
+                         for d, ret in zip(V_dates, V_returns_raw):
+                             portfolios[method].add_period(
+                                 date=d, weight=w,
+                                 realized_return=float(w @ ret),
+                                 solve_time=result.get('solve_time', 0.0)/len(V_dates),
+                                 threshold_post=result.get('threshold_post')
+                             )
+
+        # Final Save
         aggregate_and_save_results(
             portfolios=portfolios, result_folder=result_folder,
             asset_names=asset_names, prefix="rolling_agg",
             cfg=cfg, results=None
         )
-
         print(f"📝 Log saved to: {log_file}")
-
         return { "portfolios": portfolios, "result_folder": result_folder }
 
     finally:

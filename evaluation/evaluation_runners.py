@@ -6,7 +6,8 @@ from typing import Dict, Optional, Any
 import torch
 import traceback
 from configs import config_revised as config
-from data.data_loader_final import TimeSeriesDataLoader
+from data.data_loader_final import TimeSeriesDataLoader, SimpleTimeSeriesDataLoader 
+from data.data_factory import get_dataset                      
 import cpp.solver as cpp_solver
 from layers.multi_cp import SPCI_and_EnbPI 
 from evaluation.run_ccpo import CCPOPortfolioOptimizer
@@ -106,25 +107,31 @@ def run_ccpo_direct(
     cfg: config = config
 ) -> Dict[str, Any]:
     """
-    Run CCPO method for direct evaluation (single split) using config settings.
-    Uses Train/Valid(K)/Test(V) split defined in config.
+    Run CCPO method for direct evaluation (single split).
+    Uses data_factory to support both 3-Split and 2-Split automatically.
     """
-    print(f"  Running CCPO-CCO (Direct Single Split)...")
+    split_mode = getattr(cfg, "SPLIT_MODE", "3_split")
+    print(f"  Running CCPO-CCO (Direct Single Split, MODE={split_mode})...")
     print(f"    Lookback={lookback}, Alpha={alpha}")
 
     start_time_total = time.time()
-    loader = TimeSeriesDataLoader(base_path=config.DATA_PATH, num_assets=cfg.NUM_ASSETS) # Use config DATA_PATH
-
+    
+    # [MODIFIED] Use Factory instead of manual loader creation
+    # This handles the complex switching logic between Simple/Final loaders and args
     try:
-        # 1. Load data based on config's direct split settings
-        create_kwargs = _build_create_all_kwargs(cfg) # Use helper for direct split
-        print(f"    loader.create_all kwargs (direct): {create_kwargs}")
-        res = loader.create_all(**create_kwargs)
-
+        res = get_dataset(cfg)
+        
+        # Extract components
         train_loader = res['model']['train_loader']
-        valid_loader = res['model']['valid_loader'] # Used for Calibration (K period)
-        test_loader  = res['model']['test_loader']  # Used for final testing (V period)
+        valid_loader = res['model']['valid_loader'] 
+        test_loader  = res['model']['test_loader']
         scaler = res['scaler']
+        
+        # Loader for referencing methods (though we have the data already)
+        # We need a loader instance for the conformal predictor internal calls (e.g. resample utils)
+        # We can create a dummy one or use the one from factory if exposed.
+        # Since factory returns dict, let's create a temp loader for Utils.
+        temp_loader = TimeSeriesDataLoader(base_path=data_path, num_assets=cfg.NUM_ASSETS)
 
         # These are RAW returns, not scaled
         V_returns_raw = res['opt']['y_V']
@@ -132,12 +139,18 @@ def run_ccpo_direct(
         n_assets = V_returns_raw.shape[1] if V_returns_raw.ndim > 1 else (1 if V_returns_raw.size > 0 else 0)
 
 
-        # Check if loaders are empty, which might indicate issues with split dates/lengths
+        # Check if loaders are empty
         if len(train_loader.dataset) == 0:
              print("    ⚠️ Warning: Train loader is empty. Check config TRAIN settings.")
-             # return {'status': 'error: Empty train loader', 'portfolios': []} # Or allow continuation?
-        if len(valid_loader.dataset) == 0:
-             print("    ⚠️ Warning: Validation (K) loader is empty. Check config VALID/K settings.")
+        
+        # For 2-split, valid_loader is None. We use train_loader as Calibration set.
+        if split_mode == "2_split":
+            print("    [2-Split] Using Train Loader as Calibration(K) Set.")
+            loader_k = train_loader
+        else:
+            if valid_loader is None or len(valid_loader.dataset) == 0:
+                print("    ⚠️ Warning: Validation (K) loader is empty or None in 3-split mode.")
+            loader_k = valid_loader
 
 
         # 2. Initialize optimizer
@@ -149,19 +162,22 @@ def run_ccpo_direct(
             max_d=cfg.CCPO.QRF_MAX_DEPTH, criterion=cfg.CCPO.CRITERION
         )
 
-        # 3. Train models and Calibrate using Train and Valid(K) loaders
+        # 3. Train models and Calibrate
         print(f"    Training {cfg.CCPO.B} bootstrap models...")
         start_time_calib = time.time()
 
         # Data needs to be Tensors
         X_train, Y_train = train_loader.dataset.X, train_loader.dataset.y
-        X_valid, Y_valid = valid_loader.dataset.X, valid_loader.dataset.y # K data
-        X_predict, Y_predict = test_loader.dataset.X, test_loader.dataset.y # V data
+        
+        # K data (Calibration)
+        X_valid, Y_valid = loader_k.dataset.X, loader_k.dataset.y 
+        
+        # V data (Prediction)
+        X_predict, Y_predict = test_loader.dataset.X, test_loader.dataset.y 
 
-        # Handle cases where loaders might be empty
         if X_train.nelement() == 0 or X_valid.nelement() == 0:
-             raise ValueError("Train or Validation data is empty, cannot proceed.")
-        # Allow X_predict to be empty
+             raise ValueError("Train or Calibration data is empty, cannot proceed.")
+
         if X_predict.nelement() == 0:
              print("    Note: Test data (V) is empty, using validation data as placeholder for predictor init.")
              X_predict, Y_predict = X_valid.clone(), Y_valid.clone()
@@ -170,7 +186,7 @@ def run_ccpo_direct(
         conformal_predictor = SPCI_and_EnbPI(
             X_train, X_valid, X_predict,
             Y_train, Y_valid, Y_predict,
-            model_cls=cfg.CCPO.MODEL_CLASS, loader=loader, scaler=scaler,
+            model_cls=cfg.CCPO.MODEL_CLASS, loader=temp_loader, scaler=scaler,
             device=cfg.DEVICE, r=cfg.CCPO.LOW_RANK_R,
             use_local_ellipsoid=cfg.CCPO.USE_LOCAL_ELLIPSOID,
             bins=cfg.CCPO.QRF_BINS,
@@ -182,10 +198,10 @@ def run_ccpo_direct(
         results = conformal_predictor.fit_bootstrap_models_online_multistep(
             B=cfg.CCPO.B, batch_size=cfg.CCPO.BATCH_SIZE, EPOCHS=cfg.CCPO.EPOCHS,
             lr=cfg.CCPO.LEARNING_RATE, path=cfg.CCPO.WEIGHTS_PATH,
-            patience=cfg.CCPO.PATIENCE, valid_mode=True # Use validation set for early stopping
+            patience=cfg.CCPO.PATIENCE, valid_mode=False 
         )
 
-        print(f"    Calibrating conformal prediction intervals (using K period)...")
+        print(f"    Calibrating conformal prediction intervals...")
         conformal_predictor.compute_Widths_Ensemble_online(
             alpha=alpha, smallT=False, use_SPCI=cfg.CCPO.USE_SPCI,
             past_window=cfg.CCPO.PAST_WINDOW, random_state=cfg.SEED
@@ -193,68 +209,26 @@ def run_ccpo_direct(
         calibration_time = time.time() - start_time_calib
 
         mean_coverage_calib, mean_volume_calib, coverage_seq, volume_seq, radius_seq = conformal_predictor.get_results()
-        if not radius_seq: # Handle empty radius sequence
+        if not radius_seq: 
              raise ValueError("Calibration failed: Radius sequence is empty.")
-        radius = float(np.mean(radius_seq)) # Use mean radius calibrated on K
-        cov_matrix = conformal_predictor.global_cov # Or local if configured
+        radius = float(np.mean(radius_seq))
+        cov_matrix = conformal_predictor.global_cov 
 
         print(f"    ✅ Calibration done - Calib Set Coverage: {mean_coverage_calib:.3f}, Radius: {radius:.6f}, Time: {calibration_time:.2f}s")
 
-        # 4. Optimize portfolio for each period in V using calibrated results
+        # 4. Optimize portfolio for each period in V
         print(f"    Optimizing portfolio for each of {len(V_dates)} test periods (V)...")
         start_time_opt = time.time()
         portfolios_list = []
         mu_pred_raw = results['test']['preds'].squeeze(1).cpu().numpy()
         
-        # # We need the full raw data series to get lookback windows for V period predictions
-        # full_returns_raw = loader.resample_frequency(loader.raw_data, cfg.FREQUENCY)
-        # full_returns_values = full_returns_raw.values
-        # full_returns_dates = full_returns_raw.index
-
-        # if len(V_dates) == 0:
-        #      print("    Note: No V periods to optimize for.")
-
         for v_idx, v_date in enumerate(V_dates):
-            # try:
-            #     # Find index in the full RAW series
-            #     date_idx = full_returns_dates.get_loc(v_date)
-            # except KeyError:
-            #     date_idx = full_returns_dates.get_indexer([v_date], method='nearest')[0]
-            #     print(f"      Warning: Date {v_date.date()} not found exactly, using nearest: {full_returns_dates[date_idx].date()}")
+            # mu_pred_raw matches V_dates length
+            current_mu = mu_pred_raw[v_idx] if v_idx < len(mu_pred_raw) else np.zeros(n_assets)
+            current_radius = radius_seq[v_idx] if v_idx < len(radius_seq) else radius
 
-            # if date_idx < lookback:
-            #     print(f"      ⚠️  Skipping {v_date.date()}: not enough history ({date_idx} < {lookback})")
-            #     continue
-
-            # # Get lookback window (RAW data), scale it for prediction
-            # X_test_raw = full_returns_values[date_idx - lookback: date_idx]
-            # if scaler:
-            #      X_test_scaled = scaler.transform(X_test_raw)
-            # else:
-            #      X_test_scaled = X_test_raw # No scaling
-
-            # X_test_tensor = torch.FloatTensor(X_test_scaled).unsqueeze(0).to(cfg.DEVICE)
-
-            # # Predict using ensemble
-            # predictions = []
-            # with torch.no_grad():
-            #      for b in range(cfg.CCPO.B):
-            #           model = conformal_predictor.models[b]
-            #           model.eval()
-            #           pred_scaled = model(X_test_tensor) # Prediction is scaled
-            #           # Remove sequence length dim if present (e.g., LSTM)
-            #           if pred_scaled.ndim == 3 and pred_scaled.shape[1] == 1:
-            #                pred_scaled = pred_scaled.squeeze(1)
-            #           elif pred_scaled.ndim != 2:
-            #                print(f"      Warning: Unexpected prediction shape {pred_scaled.shape}")
-            #           predictions.append(pred_scaled)
-
-            # mean_pred_scaled = torch.stack(predictions).mean(dim=0) # Shape: (1, n_assets)
-            # mu_pred_raw = scaler.inverse_transform(mean_pred_scaled.cpu().numpy()).flatten()
-
-            # Optimize portfolio using mu_hat (raw), cov_matrix (raw), radius (calibrated)
             opt_result = optimizer.optimize_portfolio_socp(
-                mu_hat=mu_pred_raw[v_idx], cov_matrix=cov_matrix, radius=radius_seq[v_idx],
+                mu_hat=current_mu, cov_matrix=cov_matrix, radius=current_radius,
                 gamma=cfg.CCPO.GAMMA, formulation=cfg.CCPO.FORMULATION
             )
 
@@ -262,12 +236,10 @@ def run_ccpo_direct(
                 portfolios_list.append({
                     'date': v_date,
                     'weights': opt_result['weights'],
-                    'threshold': opt_result['threshold'], # Threshold determined by optimization
-                    # 'mu_pred': mu_pred_raw # Optional: store prediction
+                    'threshold': opt_result['threshold'], 
                 })
             else:
                 print(f"      ⚠️  Optimization failed for {v_date.date()}: {opt_result['status']}")
-                # Fallback to equal weight
                 portfolios_list.append({
                     'date': v_date,
                     'weights': np.ones(n_assets) / n_assets if n_assets > 0 else np.array([]),
@@ -278,18 +250,13 @@ def run_ccpo_direct(
         total_time = time.time() - start_time_total
         print(f"    ✅ Completed {len(portfolios_list)}/{len(V_dates)} V periods. Opt Time: {optimization_time:.2f}s, Total Time: {total_time:.2f}s")
 
-        # Return results needed for aggregate_and_save_results
         return {
-            'portfolios': portfolios_list, # List of weights/thresholds per V period
+            'portfolios': portfolios_list, 
             'status': 'optimal',
-            # Include calibration stats (informational)
-            'coverage': mean_coverage_calib, # Coverage on K period
-            'volume': mean_volume_calib,     # Volume on K period
-            'threshold': radius,             # Calibrated radius used for Opt
-            'coverage_seq': coverage_seq,    # Optional: detailed sequences
-            'volume_seq': volume_seq,
-            'radius_seq': radius_seq,
-            'calibration_time': calibration_time, # Timing info
+            'coverage': mean_coverage_calib, 
+            'volume': mean_volume_calib,     
+            'threshold': radius,             
+            'calibration_time': calibration_time, 
             'optimization_time': optimization_time
         }
 
@@ -305,53 +272,70 @@ def run_ccpo_direct(
 # ============================================================================
 
 def run_ccpo_rolling_counts(
-    data_path: str, # Usually config.DATA_PATH
+    data_path: str,
     lookback: int,
     alpha: float,
-    # --- Rolling Period Info ---
-    model_train_len: int,   # Length of Train period (before K)
-    K_len: int,             # Length of Calib (K) period
-    V_len: int,             # Length of Test (V) period
-    start_idx: int,         # Raw data start index for the Train+K+V window
-    # --- V period actual data (for optimization/eval) ---
+    model_train_len: int,   
+    K_len: int,             
+    V_len: int,             
+    start_idx: int,         
     V_dates: pd.DatetimeIndex,
-    V_returns_raw: np.ndarray, # RAW returns for V period
+    V_returns_raw: np.ndarray, 
     cfg: config = config
 ) -> Dict[str, Any]:
     """
     Run CCPO method for one window in rolling evaluation (MODE=counts).
-    Uses Train / K / V lengths relative to start_idx.
+    Handles both 3-Split and 2-Split logic.
     """
-    print(f"  Running CCPO-CCO (Rolling Window - Counts)...")
-    print(f"    TrainLen={model_train_len}, KLen(Calib)={K_len}, VLen(Test)={V_len}, StartIdx={start_idx}")
+    split_mode = getattr(cfg, "SPLIT_MODE", "3_split")
+    print(f"  Running CCPO-CCO (Rolling Counts, SPLIT={split_mode})...")
+    print(f"    TrainLen={model_train_len}, KLen={K_len}, VLen={V_len}, StartIdx={start_idx}")
 
     start_time_total = time.time()
-    loader = TimeSeriesDataLoader(base_path=config.DATA_PATH, num_assets=cfg.NUM_ASSETS)
     n_assets = V_returns_raw.shape[1] if V_returns_raw.ndim > 1 else (1 if V_returns_raw.size > 0 else 0)
 
     try:
-        # 1. Load data specifically for this window's Train and K periods
-        #    V period data (V_returns_raw) is already provided.
-        res = loader.create_all(
-            mode="counts",
-            lookback=cfg.LOOKBACK,
-            train_len=model_train_len, # Model Train length
-            K=K_len,                 # Model Valid/Calib (K) length
-            V=V_len,                     # We handle V manually using V_returns_raw
-            start_idx=start_idx,       # Starting index for the raw data window
-            batch_size=cfg.CCPO.BATCH_SIZE, # Use CCPO batch size for model loading
-            shuffle_train=True,
-            use_scaler=True,
-            resample_freq=cfg.FREQUENCY # Should match overall frequency
-        )
+        # 1. Load data
+        # [MODIFIED] Switch loader based on SPLIT_MODE
+        if split_mode == "2_split":
+            # In 2-split: model_train_len contains the K length (merged)
+            loader = SimpleTimeSeriesDataLoader(base_path=data_path, num_assets=cfg.NUM_ASSETS)
+            res = loader.create_all(
+                mode="counts",
+                lookback=lookback,
+                K=model_train_len, # Map passed TrainLen to K (as they are same)
+                V=V_len,
+                start_idx=start_idx,
+                batch_size=cfg.CCPO.BATCH_SIZE,
+                shuffle_train=True,
+                use_scaler=True,
+                resample_freq=cfg.FREQUENCY
+            )
+            train_loader = res['model']['train_loader']
+            loader_k = train_loader # Train IS K
+        else:
+            # 3-split: Standard logic
+            loader = TimeSeriesDataLoader(base_path=data_path, num_assets=cfg.NUM_ASSETS)
+            res = loader.create_all(
+                mode="counts",
+                lookback=lookback,
+                train_len=model_train_len,
+                K=K_len,
+                V=V_len,
+                start_idx=start_idx,
+                batch_size=cfg.CCPO.BATCH_SIZE,
+                shuffle_train=True,
+                use_scaler=True,
+                resample_freq=cfg.FREQUENCY
+            )
+            train_loader = res['model']['train_loader']
+            loader_k = res['model']['valid_loader']
 
-        train_loader = res['model']['train_loader']
-        valid_loader = res['model']['valid_loader'] # K period for Calibration
         test_loader = res['model']['test_loader']
-        scaler = res['scaler'] # Scaler fitted on Train period raw data
+        scaler = res['scaler']
 
-        if len(train_loader.dataset) == 0 or len(valid_loader.dataset) == 0:
-             raise ValueError("Train or Validation (K) data loader is empty for this window.")
+        if len(train_loader.dataset) == 0:
+             raise ValueError("Train data loader is empty.")
 
         # 2. Initialize optimizer
         optimizer = CCPOPortfolioOptimizer(
@@ -360,15 +344,14 @@ def run_ccpo_rolling_counts(
             use_local_ellipsoid=cfg.CCPO.USE_LOCAL_ELLIPSOID
         )
 
-        # 3. Train models and Calibrate using Train and Valid(K) loaders
+        # 3. Train & Calibrate
         print(f"    Training {cfg.CCPO.B} bootstrap models...")
         start_time_calib = time.time()
 
         X_train, Y_train = train_loader.dataset.X, train_loader.dataset.y
-        X_valid, Y_valid = valid_loader.dataset.X, valid_loader.dataset.y # K data
-        X_predict, Y_predict = test_loader.dataset.X, test_loader.dataset.y # V data
-                
-        
+        X_valid, Y_valid = loader_k.dataset.X, loader_k.dataset.y 
+        X_predict, Y_predict = test_loader.dataset.X, test_loader.dataset.y
+
         conformal_predictor = SPCI_and_EnbPI(
             X_train, X_valid, X_predict,
             Y_train, Y_valid, Y_predict,
@@ -384,10 +367,10 @@ def run_ccpo_rolling_counts(
         results = conformal_predictor.fit_bootstrap_models_online_multistep(
             B=cfg.CCPO.B, batch_size=cfg.CCPO.BATCH_SIZE, EPOCHS=cfg.CCPO.EPOCHS,
             lr=cfg.CCPO.LEARNING_RATE, path=cfg.CCPO.WEIGHTS_PATH,
-            patience=cfg.CCPO.PATIENCE, valid_mode=True
+            patience=cfg.CCPO.PATIENCE, valid_mode=False
         )
 
-        print(f"    Calibrating conformal prediction intervals (using K period)...")
+        print(f"    Calibrating conformal prediction intervals...")
         conformal_predictor.compute_Widths_Ensemble_online(
             alpha=alpha, smallT=False, use_SPCI=cfg.CCPO.USE_SPCI,
             past_window=cfg.CCPO.PAST_WINDOW, random_state=cfg.SEED
@@ -402,57 +385,21 @@ def run_ccpo_rolling_counts(
 
         print(f"    ✅ Calibration done - Calib Set Coverage: {mean_coverage_calib:.3f}, Radius: {radius:.6f}, Time: {calibration_time:.2f}s")
 
-        # 4. Optimize portfolio for each period in V
+        # 4. Optimize
         print(f"    Optimizing portfolio for each of {len(V_dates)} test periods (V)...")
         start_time_opt = time.time()
         portfolios_list = []
 
         mu_pred_raw = results["test"]["y_pred"].squeeze(1).cpu().numpy()
         
-        # Need full raw data series for lookback windows during V period
-        # full_returns_raw = loader.resample_frequency(loader.raw_data, cfg.FREQUENCY)
-        # full_returns_values = full_returns_raw.values
-        # full_returns_dates = full_returns_raw.index
-
-        # if len(V_dates) == 0:
-        #      print("    Note: No V periods to optimize for.")
-
         for v_idx, v_date in enumerate(V_dates):
-        #     try:
-        #         date_idx = full_returns_dates.get_loc(v_date)
-        #     except KeyError:
-        #         date_idx = full_returns_dates.get_indexer([v_date], method='nearest')[0]
-        #         print(f"      Warning: Date {v_date.date()} not found exactly, using nearest: {full_returns_dates[date_idx].date()}")
+            current_mu = mu_pred_raw[v_idx] if v_idx < len(mu_pred_raw) else np.zeros(n_assets)
+            current_radius = radius_seq[v_idx] if v_idx < len(radius_seq) else radius
 
-        #     if date_idx < lookback:
-        #         print(f"      ⚠️  Skipping {v_date.date()}: not enough history ({date_idx} < {lookback})")
-        #         continue
-
-        #     X_test_raw = full_returns_values[date_idx - lookback: date_idx]
-        #     if scaler: X_test_scaled = scaler.transform(X_test_raw)
-        #     else: X_test_scaled = X_test_raw
-        #     X_test_tensor = torch.FloatTensor(X_test_scaled).unsqueeze(0).to(cfg.DEVICE)
-
-        #     predictions = []
-        #     with torch.no_grad():
-        #         for b in range(cfg.CCPO.B):
-        #             model = conformal_predictor.models[b]
-        #             model.eval()
-        #             pred_scaled = model(X_test_tensor)
-        #             if pred_scaled.ndim == 3 and pred_scaled.shape[1] == 1: pred_scaled = pred_scaled.squeeze(1)
-        #             predictions.append(pred_scaled)
-
-        #     mean_pred_scaled = torch.stack(predictions).mean(dim=0)
-        #     mu_pred_raw = scaler.inverse_transform(mean_pred_scaled.cpu().numpy()).flatten()
-
-            # print(f'{v_idx} prediction: {mu_pred_raw[v_idx]}, radius: {radius_seq[v_idx]}')
             opt_result = optimizer.optimize_portfolio_socp(
-                mu_hat=mu_pred_raw[v_idx], cov_matrix=cov_matrix, radius=radius_seq[v_idx],
+                mu_hat=current_mu, cov_matrix=cov_matrix, radius=current_radius,
                 gamma=cfg.CCPO.GAMMA, formulation=cfg.CCPO.FORMULATION
             )
-            
-            # print(f'optimal weights at {v_idx}: {opt_result["weights"]}')
-            
             
             if opt_result['status'] == 'optimal':
                 portfolios_list.append({
@@ -460,7 +407,6 @@ def run_ccpo_rolling_counts(
                     'threshold': opt_result['threshold']
                 })
             else:
-                print(f"      ⚠️  Optimization failed for {v_date.date()}: {opt_result['status']}")
                 portfolios_list.append({
                     'date': v_date,
                     'weights': np.ones(n_assets) / n_assets if n_assets > 0 else np.array([]),
@@ -471,16 +417,11 @@ def run_ccpo_rolling_counts(
         total_time = time.time() - start_time_total
         print(f"    ✅ Completed {len(portfolios_list)}/{len(V_dates)} V periods. Opt Time: {optimization_time:.2f}s, Total Time: {total_time:.2f}s")
 
-        # Return only essential results for rolling aggregation
         return {
             'portfolios': portfolios_list,
             'status': 'optimal',
-            # Optionally include calibration stats if needed for window summary
-            'coverage_calib': mean_coverage_calib,
-            'radius': radius_seq,
             'calibration_time': calibration_time,
             'optimization_time': optimization_time,
-            'cov_matrix': cov_matrix
         }
 
     except Exception as e:
@@ -495,59 +436,66 @@ def run_ccpo_rolling_counts(
 # ============================================================================
 
 def run_ccpo_rolling_dates(
-    data_path: str, # Usually config.DATA_PATH
+    data_path: str,
     lookback: int,
     alpha: float,
-    # --- Rolling Period Info ---
-    train_start_date: pd.Timestamp, # Start of Train period
-    train_end_date: pd.Timestamp,   # End of Train period
-    K_end_date: pd.Timestamp,       # End of Calib (K) period
-    # V_end_date is implicitly end of V_dates
-    # --- V period actual data (for optimization/eval) ---
+    train_start_date: pd.Timestamp, 
+    train_end_date: pd.Timestamp,   
+    K_end_date: pd.Timestamp,       
     V_dates: pd.DatetimeIndex,
-    V_returns_raw: np.ndarray, # RAW returns for V period
+    V_returns_raw: np.ndarray, 
     cfg: config = config
 ) -> Dict[str, Any]:
     """
     Run CCPO method for one window in rolling evaluation (MODE=dates).
-    Uses Train / K / V date ranges.
+    Handles both 3-Split and 2-Split logic.
     """
-    # K period starts right after Train period ends
-    K_start_date = train_end_date + pd.Timedelta(days=1) # Or appropriate offset for frequency
-
-    print(f"  Running CCPO-CCO (Rolling Window - Dates)...")
-    print(f"    Train: [{train_start_date.date()} ~ {train_end_date.date()}]")
-    print(f"    K(Calib): [{K_start_date.date()} ~ {K_end_date.date()}]")
-    print(f"    V(Test): [{V_dates.min().date()} ~ {V_dates.max().date()}] ({len(V_dates)} periods)")
+    split_mode = getattr(cfg, "SPLIT_MODE", "3_split")
+    print(f"  Running CCPO-CCO (Rolling Dates, SPLIT={split_mode})...")
 
     start_time_total = time.time()
-    loader = TimeSeriesDataLoader(base_path=config.DATA_PATH, num_assets=cfg.NUM_ASSETS)
     n_assets = V_returns_raw.shape[1] if V_returns_raw.ndim > 1 else (1 if V_returns_raw.size > 0 else 0)
 
-
     try:
-        # 1. Load data specifically for this window's Train and K periods
-        res = loader.create_all(
-            mode="dates",
-            lookback=cfg.LOOKBACK,
-            # Pass ALL date boundaries
-            train_start_date=train_start_date.strftime('%Y-%m-%d'), # Use the specific start
-            train_end_date=train_end_date.strftime('%Y-%m-%d'),   # Model Train end
-            val_end_date=K_end_date.strftime('%Y-%m-%d'),         # Model Valid/Calib (K) end
-            test_end_date=None, # V is handled manually, loader doesn't need test period
-            batch_size=cfg.CCPO.BATCH_SIZE,
-            shuffle_train=True,
-            use_scaler=True,
-            resample_freq=cfg.FREQUENCY
-        )
+        # 1. Load data
+        if split_mode == "2_split":
+            # In 2-split: train_end_date is effectively the end of K
+            loader = SimpleTimeSeriesDataLoader(base_path=data_path, num_assets=cfg.NUM_ASSETS)
+            res = loader.create_all(
+                mode="dates",
+                lookback=lookback,
+                k_end_date=train_end_date.strftime('%Y-%m-%d'), 
+                v_end_date=V_dates.max().strftime('%Y-%m-%d'), # Infer V end from provided V_dates
+                train_start_date=train_start_date.strftime('%Y-%m-%d'),
+                batch_size=cfg.CCPO.BATCH_SIZE,
+                shuffle_train=True,
+                use_scaler=True,
+                resample_freq=cfg.FREQUENCY
+            )
+            train_loader = res['model']['train_loader']
+            loader_k = train_loader # Train IS K
+        else:
+            loader = TimeSeriesDataLoader(base_path=data_path, num_assets=cfg.NUM_ASSETS)
+            res = loader.create_all(
+                mode="dates",
+                lookback=lookback,
+                train_start_date=train_start_date.strftime('%Y-%m-%d'),
+                train_end_date=train_end_date.strftime('%Y-%m-%d'),
+                val_end_date=K_end_date.strftime('%Y-%m-%d'),
+                test_end_date=None, 
+                batch_size=cfg.CCPO.BATCH_SIZE,
+                shuffle_train=True,
+                use_scaler=True,
+                resample_freq=cfg.FREQUENCY
+            )
+            train_loader = res['model']['train_loader']
+            loader_k = res['model']['valid_loader']
 
-        train_loader = res['model']['train_loader']
-        valid_loader = res['model']['valid_loader'] # K period for Calibration
         test_loader = res['model']['test_loader']
-        scaler = res['scaler'] # Scaler fitted on Train period raw data
+        scaler = res['scaler'] 
 
-        if len(train_loader.dataset) == 0 or len(valid_loader.dataset) == 0:
-             raise ValueError("Train or Validation (K) data loader is empty for this window.")
+        if len(train_loader.dataset) == 0:
+             raise ValueError("Train data loader is empty.")
 
 
         # 2. Initialize optimizer
@@ -557,13 +505,13 @@ def run_ccpo_rolling_dates(
             use_local_ellipsoid=cfg.CCPO.USE_LOCAL_ELLIPSOID
         )
 
-        # 3. Train models and Calibrate using Train and Valid(K) loaders
+        # 3. Train & Calibrate
         print(f"    Training {cfg.CCPO.B} bootstrap models...")
         start_time_calib = time.time()
 
         X_train, Y_train = train_loader.dataset.X, train_loader.dataset.y
-        X_valid, Y_valid = valid_loader.dataset.X, valid_loader.dataset.y # K data
-        X_predict, Y_predict = test_loader.dataset.X, test_loader.dataset.y # V data
+        X_valid, Y_valid = loader_k.dataset.X, loader_k.dataset.y
+        X_predict, Y_predict = test_loader.dataset.X, test_loader.dataset.y
 
         conformal_predictor = SPCI_and_EnbPI(
             X_train, X_valid, X_predict,
@@ -580,10 +528,10 @@ def run_ccpo_rolling_dates(
         results = conformal_predictor.fit_bootstrap_models_online_multistep(
             B=cfg.CCPO.B, batch_size=cfg.CCPO.BATCH_SIZE, EPOCHS=cfg.CCPO.EPOCHS,
             lr=cfg.CCPO.LEARNING_RATE, path=cfg.CCPO.WEIGHTS_PATH,
-            patience=cfg.CCPO.PATIENCE, valid_mode=True
+            patience=cfg.CCPO.PATIENCE, valid_mode=False
         )
 
-        print(f"    Calibrating conformal prediction intervals (using K period)...")
+        print(f"    Calibrating conformal prediction intervals...")
         conformal_predictor.compute_Widths_Ensemble_online(
             alpha=alpha, smallT=False, use_SPCI=cfg.CCPO.USE_SPCI,
             past_window=cfg.CCPO.PAST_WINDOW, random_state=cfg.SEED
@@ -592,56 +540,25 @@ def run_ccpo_rolling_dates(
 
         mean_coverage_calib, _, _, _, radius_seq = conformal_predictor.get_results()
         if not radius_seq: raise ValueError("Calibration failed: Radius sequence is empty.")
-        # radius = float(np.mean(radius_seq))
-        cov_matrix = conformal_predictor.global_cov
-        radius = float(np.mean(radius_seq))
         
+        radius = float(np.mean(radius_seq))
+        cov_matrix = conformal_predictor.global_cov
+
         print(f"    ✅ Calibration done - Calib Set Coverage: {mean_coverage_calib:.3f}, Radius: {radius:.6f}, Time: {calibration_time:.2f}s")
 
-        # 4. Optimize portfolio for each period in V
+        # 4. Optimize
         print(f"    Optimizing portfolio for each of {len(V_dates)} test periods (V)...")
         start_time_opt = time.time()
         portfolios_list = []
 
         mu_pred_raw = results["test"]["y_pred"].squeeze(1).cpu().numpy()
         
-        # full_returns_raw = loader.resample_frequency(loader.raw_data, cfg.FREQUENCY)
-        # full_returns_values = full_returns_raw.values
-        # full_returns_dates = full_returns_raw.index
-
-        # if len(V_dates) == 0:
-        #      print("Note: No V periods to optimize for.")
-
         for v_idx, v_date in enumerate(V_dates):
-            # try:
-            #     date_idx = full_returns_dates.get_loc(v_date)
-            # except KeyError:
-            #     date_idx = full_returns_dates.get_indexer([v_date], method='nearest')[0]
-            #     print(f"      Warning: Date {v_date.date()} not found exactly, using nearest: {full_returns_dates[date_idx].date()}")
-
-            # if date_idx < lookback:
-            #     print(f"      ⚠️  Skipping {v_date.date()}: not enough history ({date_idx} < {lookback})")
-            #     continue
-
-            # X_test_raw = full_returns_values[date_idx - lookback: date_idx]
-            # if scaler: X_test_scaled = scaler.transform(X_test_raw)
-            # else: X_test_scaled = X_test_raw
-            # X_test_tensor = torch.FloatTensor(X_test_scaled).unsqueeze(0).to(cfg.DEVICE)
-
-            # predictions = []
-            # with torch.no_grad():
-            #     for b in range(cfg.CCPO.B):
-            #         model = conformal_predictor.models[b]
-            #         model.eval()
-            #         pred_scaled = model(X_test_tensor)
-            #         if pred_scaled.ndim == 3 and pred_scaled.shape[1] == 1: pred_scaled = pred_scaled.squeeze(1)
-            #         predictions.append(pred_scaled)
-
-            # mean_pred_scaled = torch.stack(predictions).mean(dim=0)
-            # mu_pred_raw = scaler.inverse_transform(mean_pred_scaled.cpu().numpy()).flatten()
+            current_mu = mu_pred_raw[v_idx] if v_idx < len(mu_pred_raw) else np.zeros(n_assets)
+            current_radius = radius_seq[v_idx] if v_idx < len(radius_seq) else radius
 
             opt_result = optimizer.optimize_portfolio_socp(
-                mu_hat=mu_pred_raw[v_idx], cov_matrix=cov_matrix, radius=radius_seq[v_idx],
+                mu_hat=current_mu, cov_matrix=cov_matrix, radius=current_radius,
                 gamma=cfg.CCPO.GAMMA, formulation=cfg.CCPO.FORMULATION
             )
 
@@ -651,7 +568,6 @@ def run_ccpo_rolling_dates(
                     'threshold': opt_result['threshold']
                 })
             else:
-                print(f"⚠️  Optimization failed for {v_date.date()}: {opt_result['status']}")
                 portfolios_list.append({
                     'date': v_date,
                     'weights': np.ones(n_assets) / n_assets if n_assets > 0 else np.array([]),
@@ -665,11 +581,8 @@ def run_ccpo_rolling_dates(
         return {
             'portfolios': portfolios_list,
             'status': 'optimal',
-            'coverage_calib': mean_coverage_calib,
-            'radius': radius_seq[v_idx],
             'calibration_time': calibration_time,
             'optimization_time': optimization_time,
-            'cov_matrix': cov_matrix
         }
 
     except Exception as e:

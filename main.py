@@ -1,48 +1,74 @@
-# ccpo/main.py
-
 import sys
 import os
 import warnings
 warnings.filterwarnings('ignore')
 
-# --- 중요 ---
-# main.py가 있는 'ccpo' 폴더를 파이썬 경로에 추가합니다.
+# --- Path Setup ---
+# Add the 'ccpo' directory to the Python path to ensure module imports work correctly
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# 설정 및 시드 고정
+# --- Imports ---
 from configs import config_revised as config
 from layers.cp_utils import set_seed
 
-# --- 수정된 import 경로 ---
+# Runners
 from evaluation.run_direct_evaluation import run_direct_evaluation
 from evaluation.run_rolling_evaluation import run_rolling_evaluation
 
 if __name__ == "__main__":
+    # 1. Set Seed for reproducibility
     set_seed(config.SEED)
 
-    # config.EVALUATION_MODE에 따라 분기
-    if config.EVALUATION_MODE == "direct":
-        print(f"Running Direct (Single Split) Evaluation (MODE={config.MODE})...")
-        results = run_direct_evaluation(
-            data_path=config.DATA_PATH,
-            frequency=config.FREQUENCY,
-            lookback=config.LOOKBACK,
-            alpha=config.ALPHA,
-            cfg=config
-        )
-    elif config.EVALUATION_MODE == "rolling":
-        print(f"Running Rolling Window Evaluation (MODE={config.MODE}, TYPE={config.ROLLING.WINDOW_TYPE})...")
-        results = run_rolling_evaluation(
-            data_path=config.DATA_PATH,
-            frequency=config.FREQUENCY,
-            lookback=config.LOOKBACK,
-            alpha=config.ALPHA,
-            cfg=config
-        )
-    else:
-        raise ValueError(
-            f"Unknown EVALUATION_MODE in config: {config.EVALUATION_MODE}. "
-            f"Use 'direct' or 'rolling'."
-        )
+    # 2. Retrieve and Validate Configuration
+    # Safe retrieval of SPLIT_MODE (defaults to "3_split" if missing)
+    split_mode = getattr(config, "SPLIT_MODE", "3_split").lower()
+    data_mode = config.MODE.lower()
+    eval_mode = config.EVALUATION_MODE.lower()
 
-    print("\n✅ Evaluation completed!")
+    # --- Validation Block ---
+    if split_mode not in ["2_split", "3_split"]:
+        raise ValueError(f"Invalid SPLIT_MODE: '{split_mode}'. Must be '2_split' or '3_split'.")
+    
+    if data_mode not in ["counts", "dates"]:
+        raise ValueError(f"Invalid MODE: '{data_mode}'. Must be 'counts' or 'dates'.")
+        
+    if eval_mode not in ["direct", "rolling"]:
+        raise ValueError(f"Invalid EVALUATION_MODE: '{eval_mode}'. Must be 'direct' or 'rolling'.")
+    # ------------------------
+
+    # 3. Print Execution Status
+    print(f"\n{'='*60}")
+    print(f"🚀 CCPO Execution Started")
+    print(f"{'='*60}")
+    print(f" 🔹 Evaluation Type : {eval_mode.upper()}") # Direct or Rolling
+    print(f" 🔹 Data Mode       : {data_mode.upper()}")  # Counts or Dates
+    print(f" 🔹 Split Mode      : {split_mode.upper()}") # 2_SPLIT or 3_SPLIT
+    print(f" 🔹 Asset Count     : {config.NUM_ASSETS}")
+    print(f" 🔹 Device          : {config.DEVICE}")
+    print(f"{'='*60}\n")
+
+    # 4. Run Evaluation based on Mode
+    try:
+        if eval_mode == "direct":
+            results = run_direct_evaluation(
+                data_path=config.DATA_PATH,
+                frequency=config.FREQUENCY,
+                lookback=config.LOOKBACK,
+                alpha=config.ALPHA,
+                cfg=config
+            )
+        elif eval_mode == "rolling":
+            results = run_rolling_evaluation(
+                data_path=config.DATA_PATH,
+                frequency=config.FREQUENCY,
+                lookback=config.LOOKBACK,
+                alpha=config.ALPHA,
+                cfg=config
+            )
+        
+        print("\n✅ Main Execution Completed Successfully!")
+        
+    except Exception as e:
+        print(f"\n❌ Execution Failed: {str(e)}")
+        # Raise the error again to see the full traceback
+        raise e
