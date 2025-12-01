@@ -134,8 +134,8 @@ def binning_use_RF_quantile_regr(quantile_regr, cov_mat_est, Xtrain, Ytrain, fea
     return i_star, beta_ls[i_star], wid_left, wid_right
 
 
-def train_models(model_cls, data_loader, valid_data_loader, EPOCHS=100, lr=1e-3, 
-                 path='./weights/', patience=10, valid_mode=False):
+def train_models(model_cls, data_loader, EPOCHS=100, lr=1e-3, 
+                 path='./weights/'):
     
     os.makedirs(path, exist_ok=True)
 
@@ -143,7 +143,7 @@ def train_models(model_cls, data_loader, valid_data_loader, EPOCHS=100, lr=1e-3,
     indices_ls = []
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     criterion = nn.MSELoss()
-    
+
     for i, (loader_b, indices_b) in enumerate(data_loader):
         
         sample_x, sample_y, _, _ = next(iter(loader_b))
@@ -152,7 +152,11 @@ def train_models(model_cls, data_loader, valid_data_loader, EPOCHS=100, lr=1e-3,
             input_dim = sample_x.shape[1] * sample_x.shape[2]
             hidden_dim = 2000
             output_dim = sample_y.shape[1] * sample_y.shape[2]
-            model_b = model_cls(input_dim=input_dim, hidden_dim=hidden_dim, output_dim=output_dim).to(device)
+            model_b = model_cls(
+                input_dim=input_dim,
+                hidden_dim=hidden_dim,
+                output_dim=output_dim
+            ).to(device)
         
         elif model_cls == DLinear:
             seq_len = sample_x.shape[1]
@@ -166,7 +170,11 @@ def train_models(model_cls, data_loader, valid_data_loader, EPOCHS=100, lr=1e-3,
                     self.enc_in = enc_in
                     self.individual = individual
                     
-            dlinear_configs = DLinearConfig(seq_len=seq_len, pred_len=pred_len, enc_in=enc_in)      # 수정
+            dlinear_configs = DLinearConfig(
+                seq_len=seq_len,
+                pred_len=pred_len,
+                enc_in=enc_in
+            )
             model_b = model_cls(dlinear_configs).to(device)
         
         elif model_cls == LSTMModel:
@@ -183,26 +191,28 @@ def train_models(model_cls, data_loader, valid_data_loader, EPOCHS=100, lr=1e-3,
                     self.pred_len = pred_len
                     self.dropout = dropout
                     
-            lstm_configs = LSTMConfig(enc_in=enc_in, c_out=c_out, seq_len=seq_len, pred_len=pred_len, dropout=0.1)
+            lstm_configs = LSTMConfig(
+                enc_in=enc_in,
+                c_out=c_out,
+                seq_len=seq_len,
+                pred_len=pred_len,
+                dropout=0.1
+            )
             model_b = model_cls(lstm_configs).to(device)
             
         else:
             raise ValueError(f"Unsupported model class: {model_cls}")
             
         optimizer = optim.Adam(model_b.parameters(), lr=lr)
-        
-        best_val_loss = float('inf')
-        patience_counter = 0
-        
 
-        model_name = model_cls.__name__ 
+        model_name = model_cls.__name__
         model_save_path = f"{path}/{model_name}_model_b{i}.pt"
 
         for epoch in range(EPOCHS):
             model_b.train()
-            total_train_loss = 0.0 
+            total_train_loss = 0.0
+
             for X_batch, y_batch, _, _ in loader_b:
-                
                 if model_cls == MLP:
                     X_batch = X_batch.float().to(device).view(X_batch.size(0), -1)
                     y_batch = y_batch.float().to(device).view(y_batch.size(0), -1)
@@ -218,55 +228,15 @@ def train_models(model_cls, data_loader, valid_data_loader, EPOCHS=100, lr=1e-3,
                 total_train_loss += loss.item()
             
             avg_train_loss = total_train_loss / len(loader_b)
+            print(f"Model Num {i} ({model_name}), Epoch {epoch+1}, Train Loss: {avg_train_loss:.4f}")
 
-            if valid_mode:
-                model_b.eval()
-                total_val_loss = 0.0
-                with torch.no_grad():
-                    for X_val, y_val, _, _ in valid_data_loader:
-                        if model_cls == MLP:
-                            X_val = X_val.float().to(device).view(X_val.size(0), -1)
-                            y_val = y_val.float().to(device).view(y_val.size(0), -1)
-                        else:
-                            X_val = X_val.float().to(device)
-                            y_val = y_val.float().to(device)
-                        
-                        preds_val = model_b(X_val)
-                        val_loss = criterion(preds_val, y_val)
-                        total_val_loss += val_loss.item()
-                
-                avg_val_loss = total_val_loss / len(valid_data_loader)
-                
-                if (epoch + 1) % 10 == 0 or epoch == 0:
-                    print(f"Model Num {i} ({model_name}), Epoch {epoch+1}, Train Loss: {avg_train_loss:.4f}, Valid Loss: {avg_val_loss:.4f}")
-
-                if avg_val_loss < best_val_loss:
-                    best_val_loss = avg_val_loss
-                    patience_counter = 0
-                    torch.save(model_b.state_dict(), model_save_path)
-                else:
-                    patience_counter += 1
-                
-                if patience_counter >= patience:
-                    print(f"Early stopping for model {i} ({model_name}) at epoch {epoch+1}!")
-                    break
-            else:
-                print(f"Model Num {i} ({model_name}), Epoch {epoch+1}, Train Loss: {avg_train_loss:.4f}")
-        
-        if valid_mode:
-            if os.path.exists(model_save_path):
-                print(f"Loading best model for {model_name}_{i} with validation loss: {best_val_loss:.4f}")
-                model_b.load_state_dict(torch.load(model_save_path))
-            else:
-                print(f"Warning: No model was saved for {model_name}_{i} as validation loss never improved.")
-        else:
-            print(f"Saving final model for {model_name}_{i} after {EPOCHS} epochs.")
-            torch.save(model_b.state_dict(), model_save_path)
+        print(f"Saving final model for {model_name}_{i} after {EPOCHS} epochs.")
+        torch.save(model_b.state_dict(), model_save_path)
         
         models.append(model_b)
         indices_ls.append(indices_b)
         print("-" * 60)
-        
+
     return models, indices_ls
 
 

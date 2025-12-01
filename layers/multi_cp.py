@@ -61,13 +61,12 @@ class SPCI_and_EnbPI():
         self.c = 0.995
         self.T1 = None
         
-        # 결과 저장용
         self.Width_Ensemble = None
         self.global_cov = None
         self.global_cov_inv = None
         
         
-    def fit_bootstrap_models_online_multistep(self, B, batch_size=64, EPOCHS=100, lr=1e-3, path='./weights/', patience=10, valid_mode=True):
+    def fit_bootstrap_models_online_multistep(self, B, batch_size=64, EPOCHS=100, lr=1e-3, path='./weights/'):
         '''
           Train B bootstrap estimators from subsets of (X_train, Y_train), 
           compute aggregated predictors, and compute the residuals
@@ -83,11 +82,9 @@ class SPCI_and_EnbPI():
         valid_loader = torch.utils.data.DataLoader(valid_dataset, batch_size=batch_size, shuffle=False)
         test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
-        # 2. 부트스트랩 DataLoader
         bootstrap_loaders = make_bootstrap_loader(train_dataset, B=B, batch_size=batch_size)
 
-        # 3. Boostrap model training
-        models, indices_ls = train_models(self.model_cls, bootstrap_loaders, valid_loader, EPOCHS=EPOCHS, lr=lr, path=path, patience=patience, valid_mode=valid_mode)
+        models, indices_ls = train_models(self.model_cls, bootstrap_loaders, valid_loader, EPOCHS=EPOCHS, lr=lr, path=path)
         self.models = models
 
         result = compute_residuals(
@@ -147,7 +144,6 @@ class SPCI_and_EnbPI():
     def get_rank_approx(self, A):
         r = self.r
         if r is not None:
-            # Rank r approximation
             u, s, v = np.linalg.svd(A, full_matrices=False)
             Ur = u[:, :r]; Sr = np.diag(s[:r]); Vr = v[:r, :]
             Ar = np.dot(Ur, np.dot(Sr, Vr))
@@ -158,13 +154,11 @@ class SPCI_and_EnbPI():
         return Ar, Ar_pseudo_inverse
 
     def get_et(self, residuals):
-        # There are shape: length-by-d, where d = dimension of Y
         if self.get_test_et is False:
             global_cov, global_inv = self.get_rank_approx(np.cov(residuals.T))
             self.global_cov = global_cov
             self.global_cov_inv = global_inv
             
-        # Get the non-conformity scores
         nonconform_scores = []
         for i in range(len(residuals)):
             if self.use_local_ellipsoid is False:
@@ -176,7 +170,6 @@ class SPCI_and_EnbPI():
                     cov_mat_est_inv = self.get_local_ellipsoid()
             nonconform_scores.append(np.sqrt(
                 np.matmul(residuals[i], np.matmul(cov_mat_est_inv, residuals[i].T))))
-            # nonconform_scores.append(np.matmul(residuals[i], np.matmul(cov_mat_est_inv, residuals[i].T)))
         return np.array(nonconform_scores)
 
     def compute_Widths_Ensemble_online(self, alpha, stride=1, smallT=True, past_window=100, use_SPCI=False, quantile_regr='RF', random_state=None):
@@ -190,29 +183,22 @@ class SPCI_and_EnbPI():
         self.random_state = random_state
         self.alpha = alpha
         n1 = len(self.X_valid)
-        # For SPCI, this is the "lag" for predicting quantile (i.e., feature dimension)
-        # For EnbPI, this is how many past non-conformity scores we take the quantile over
         self.past_window = past_window 
         if smallT:
-            # Namely, for special use of EnbPI, only use at most past_window number of LOO residuals.
             n1 = min(self.past_window, len(self.X_valid))
-        # Now f^b and LOO residuals have been constructed from earlier
         out_sample_predict = self.Ensemble_pred_interval_centers
         start = time.time()
-        # Matrix, where each row is a UNIQUE slice of residuals with length stride.
         if use_SPCI:
             s = stride
             stride = 1
-        # NOTE, NOT ALL rows are actually "observable" in multi-step context, as this is rolling
         resid_strided = strided_app(self.all_et[len(self.X_valid) - n1:-1], n1, stride)
         
-        # NEW: compute the non-conformity scores
         print(f'Shape of slided e_t lists is {resid_strided.shape}')
         num_unique_resid = resid_strided.shape[0]
         width_left = np.zeros(num_unique_resid)
         width_right = np.zeros(num_unique_resid)
        
-        # NOTE: 'max_features='log2', max_depth=2' make the model "simpler", which improves performance in practice 
+        # NOTE:
         self.QRF_ls = []
         self.i_star_ls = []
         self.radius_ls = []
@@ -221,14 +207,9 @@ class SPCI_and_EnbPI():
             if use_SPCI:
                 remainder = i % s
                 if remainder == 0:
-                    # Update QRF
                     past_resid = resid_strided[i, :]
                     n2 = self.past_window
                     resid_pred = self.multi_step_QRF(past_resid, i, s, n2)
-                    
-                # Use the fitted regressor.
-                # NOTE, residX is NOT the same as before, as it depends on
-                # "past_resid", which has most entries replaced.
                 
                 rfqr= self.QRF_ls[remainder]
                 i_star = self.i_star_ls[remainder]
@@ -241,8 +222,6 @@ class SPCI_and_EnbPI():
                 
             else:
                 past_resid = resid_strided[i, :]
-                # Naive empirical quantile, where we use the SAME residuals for multi-step prediction
-                # The number of bins will be determined INSIDE binning
                 cov_mat = self.global_cov if self.use_local_ellipsoid is False else self.cov_matrix_ls[i]
                 beta_hat_bin = binning(past_resid, cov_mat, alpha, self.bins)
                 self.beta_hat_bins.append(beta_hat_bin)
@@ -252,8 +231,6 @@ class SPCI_and_EnbPI():
                     past_resid, math.ceil(100 * (1 - alpha + beta_hat_bin)))
             num_print = int(num_unique_resid / 20)
             
-            # width_left = np.sqrt(np.maximum(0, width_left))
-            # width_right = np.sqrt(np.maximum(0, width_right))
             
             if num_print == 0:
                 print(
@@ -268,15 +245,12 @@ class SPCI_and_EnbPI():
         print(
             f'Finish Computing {num_unique_resid} unique Prediction Intervals, took {time.time()-start} secs.')
         Ntest = len(out_sample_predict)
-        # This is because |width|=T1/stride.
         width_left = np.repeat(width_left, stride)[:Ntest]
-        # This is because |width|=T1/stride.
         width_right = np.repeat(width_right, stride)[:Ntest]
         Width_Ensemble = pd.DataFrame(np.c_[width_left,width_right], columns=['lower', 'upper'])
         self.Width_Ensemble = Width_Ensemble
 
     def get_results(self):
-        # Also report average prediction region area using 
         covered_or_not, rolling_size = [], []
         for i in range(len(self.test_et)):
             et = self.test_et[i]
@@ -315,10 +289,6 @@ class SPCI_and_EnbPI():
             s: num of multi-step, same as stride
             n2: past window w
         '''
-        # 1. Get "past_resid" into an auto-regressive fashion
-        # This should be more carefully examined, b/c it depends on how long \hat{\eps}_t depends on the past
-        # From practice, making it small make intervals wider
-        # valid로 train, test로 predict
         num = len(past_resid)
         resid_pred = past_resid[-n2:].reshape(1, -1)
         residX = sliding_window_view(past_resid[:num-s+1], window_shape=n2)
@@ -327,11 +297,9 @@ class SPCI_and_EnbPI():
             residY = past_resid[n2+k:num-(s-k-1)]
             self.train_QRF(residX, residY)
             if i == 0:
-                # Initial training, append QRF to QRF_ls
                 self.QRF_ls.append(self.rfqr)
                 self.i_star_ls.append(self.i_star)
             else:
-                # Retraining, update QRF to QRF_ls
                 self.QRF_ls[k] = self.rfqr
                 self.i_star_ls[k] = self.i_star
         return resid_pred
@@ -347,20 +315,16 @@ class SPCI_and_EnbPI():
                                   random_state = self.random_state)
         
         if residX[:-1].shape[0] > 10000:
-            # see API ref. https://sklearn-quantile.readthedocs.io/en/latest/generated/sklearn_quantile.RandomForestQuantileRegressor.html?highlight=RandomForestQuantileRegressor#sklearn_quantile.RandomForestQuantileRegressor
-            # NOTE, should NOT warm start, as it makes result poor
             self.rfqr = SampleRandomForestQuantileRegressor(
                 **self.common_params, q=full_alphas)
         else:
             self.rfqr = RandomForestQuantileRegressor(
                 **self.common_params, q=full_alphas)
-        # 3. Find best \hat{\beta} via evaluating many quantiles
-        # rfqr.fit(residX[:-1], residY)
         sample_weight = None
         if self.weigh_residuals:
             sample_weight = self.c ** np.arange(len(residY), 0, -1)
         if self.T1 is not None:
-            self.T1 = min(self.T1, len(residY)) # Sanity check to make sure no errors in training
+            self.T1 = min(self.T1, len(residY))
             self.i_star, _, _, _ = binning_use_RF_quantile_regr(
                 self.rfqr, self.cov_matrix, residX[-(self.T1+1):-1], residY[-self.T1:], residX[-1], beta_ls, sample_weight)
         else:

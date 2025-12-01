@@ -24,26 +24,26 @@ def run_direct_evaluation(
     lookback = lookback or cfg.LOOKBACK
     alpha = alpha or cfg.ALPHA
     
-    split_mode = getattr(cfg, "SPLIT_MODE", "3_split")
+    prediction_mode = getattr(cfg, "PREDICTION_MODE", "single")
 
     # Logger Setup
     timestamp = datetime.now().strftime("%m%d%H%M")
     result_folder = os.path.join(
         os.path.dirname(__file__),
         "..", "results",
-        f"run_direct_{cfg.MODE}_{split_mode}_{timestamp}"
+        f"run_direct_{cfg.MODE}_{prediction_mode}_{timestamp}"
     )
     os.makedirs(result_folder, exist_ok=True)
 
     log_file = os.path.join(result_folder, "direct_log.txt")
     logger = DirectLogger(log_file)
-    logger.log_header(title=f"Direct Evaluation (MODE={cfg.MODE}, SPLIT={split_mode})")
+    logger.log_header(title=f"Direct Evaluation (MODE={cfg.MODE}, PREDICTION={prediction_mode})")
 
     original_stdout = sys.stdout
     sys.stdout = logger
 
     try:
-        print(f"🎯 Direct Evaluation (Single Split, MODE={cfg.MODE}, SPLIT={split_mode})")
+        print(f"🎯 Direct Evaluation (Single Split, MODE={cfg.MODE}, PREDICTION={prediction_mode})")
         print("\nConfiguration:")
         print(f"  Frequency: {frequency}")
         print(f"  Lookback={lookback}, Alpha={alpha}\n")
@@ -66,6 +66,7 @@ def run_direct_evaluation(
         # Or better, we assume a standard set or derived from loaded data if exposed.
         # Ideally, we should get asset names from the factory result or loader, but loader is hidden.
         # We will quickly load raw head to get names.
+        
         temp_df = pd.read_csv(os.path.join(cfg.DATA_PATH, f"industry_{cfg.NUM_ASSETS}_daily.csv"), index_col=0, nrows=2)
         asset_names = temp_df.columns.tolist()
         n_assets = len(asset_names)
@@ -126,6 +127,7 @@ def run_direct_evaluation(
         # but for now we pass cfg and let it handle or use the factory if updated.
         # If run_ccpo_direct is not updated to use factory, it might reload data.
         # Assuming run_ccpo_direct is compatible or we rely on cfg settings.
+        
         ccpo_res = run_ccpo_direct(
             data_path=cfg.DATA_PATH,
             lookback=lookback,

@@ -1,5 +1,6 @@
 from typing import Dict, Any
 from data.data_loader_final import TimeSeriesDataLoader, SimpleTimeSeriesDataLoader
+from data.data_loader_multistep import DataLoaderMultiStep
 
 def get_dataset(cfg) -> Dict[str, Any]:
     """
@@ -17,10 +18,10 @@ def get_dataset(cfg) -> Dict[str, Any]:
     }
 
     # ==========================================
-    # Case 1: 2-Split Mode (Train(K) / Test(V))
+    # Case 1: Single-Step Forecasting
     # ==========================================
-    if getattr(cfg, "SPLIT_MODE", "3_split") == "2_split":
-        print(f">> Initializing 2-Split Loader (Train(K) / Test(V))...")
+    if getattr(cfg, "PREDICTION_TYPE", "single") == "single":
+        print(f">> Initializing Single Step Prediction Loader (Train(K) / Test(V))...")
         loader = SimpleTimeSeriesDataLoader(base_path=cfg.DATA_PATH, num_assets=cfg.NUM_ASSETS)
         
         mode_kwargs = {}
@@ -35,7 +36,6 @@ def get_dataset(cfg) -> Dict[str, Any]:
             mode_kwargs = {
                 "k_end_date": cfg.K_END_DATE,
                 "v_end_date": cfg.V_END_DATE,
-                # "train_start_date": ... (Optional)
             }
         
         # Combine and Run
@@ -43,26 +43,28 @@ def get_dataset(cfg) -> Dict[str, Any]:
         return loader.create_all(mode=cfg.MODE, **final_kwargs)
 
     # ==========================================
-    # Case 2: 3-Split Mode (Train / Valid / Test)
+    # Case 2: Multi-step Forecasting
     # ==========================================
-    else:
-        print(f">> Initializing 3-Split Loader (Original)...")
-        loader = TimeSeriesDataLoader(base_path=cfg.DATA_PATH, num_assets=cfg.NUM_ASSETS)
+    elif getattr(cfg, "PREDICTION_TYPE", "multi") == "multi":
+        print(f">> Initializing Multi Step Prediction Loader (Train(K) / Test(V))...")
+        loader = DataLoaderMultiStep(base_path=cfg.DATA_PATH, num_assets=cfg.NUM_ASSETS, horizon=cfg.HORIZON)
         
         mode_kwargs = {}
         if cfg.MODE == "counts":
-            # Map config variables to 3-split args
+            # Map config variables to multi-step args
             mode_kwargs = {
-                "train_len": cfg.TRAIN_LENGTH,
-                "K": cfg.LEN_K,
-                "V": cfg.LEN_V,
+                "K": cfg.TRAIN_K_LEN,   # K length (Train)
+                "V": cfg.TEST_V_LEN,    # V length (Test)
+                "start_idx": 0          # Default start
             }
         elif cfg.MODE == "dates":
             mode_kwargs = {
-                "train_end_date": cfg.TRAIN_END_DATES,
-                "val_end_date": cfg.VALID_END_DATES,
-                "test_end_date": cfg.TEST_END_DATES,
+                "k_end_date": cfg.K_END_DATE,
+                "v_end_date": cfg.V_END_DATE,
             }
             
         final_kwargs = {**common_kwargs, **mode_kwargs}
         return loader.create_all(mode=cfg.MODE, **final_kwargs)
+    
+    else:
+        raise ValueError(f"Unsupported PREDICTION_TYPE: {cfg.PREDICTION_TYPE}. Choose either 'single' or 'multi'.")

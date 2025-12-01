@@ -7,9 +7,10 @@ import torch
 import traceback
 from configs import config_revised as config
 from data.data_loader_final import TimeSeriesDataLoader, SimpleTimeSeriesDataLoader 
+from data.data_loader_multistep import DataLoaderMultiStep
 from data.data_factory import get_dataset                      
 import cpp.solver as cpp_solver
-from layers.multi_cp import SPCI_and_EnbPI 
+from layers.multi_cp_new import SPCI_and_EnbPI 
 from evaluation.run_ccpo import CCPOPortfolioOptimizer
 from utils.evaluation_utils import _build_create_all_kwargs
 
@@ -108,10 +109,10 @@ def run_ccpo_direct(
 ) -> Dict[str, Any]:
     """
     Run CCPO method for direct evaluation (single split).
-    Uses data_factory to support both 3-Split and 2-Split automatically.
+    Uses data_factory to support both single step forecasting and multi step forecasting automatically.
     """
-    split_mode = getattr(cfg, "SPLIT_MODE", "3_split")
-    print(f"  Running CCPO-CCO (Direct Single Split, MODE={split_mode})...")
+    prediction_mode = getattr(cfg, "PREDICRTION_MODE", "single")
+    print(f"  Running CCPO-CCO (MODE={prediction_mode})...")
     print(f"    Lookback={lookback}, Alpha={alpha}")
 
     start_time_total = time.time()
@@ -144,8 +145,8 @@ def run_ccpo_direct(
              print("    ⚠️ Warning: Train loader is empty. Check config TRAIN settings.")
         
         # For 2-split, valid_loader is None. We use train_loader as Calibration set.
-        if split_mode == "2_split":
-            print("    [2-Split] Using Train Loader as Calibration(K) Set.")
+        if prediction_mode == "single":
+            print("    [Single Step] Using Single Period Forecasting Loaders.")
             loader_k = train_loader
         else:
             if valid_loader is None or len(valid_loader.dataset) == 0:
@@ -168,24 +169,12 @@ def run_ccpo_direct(
 
         # Data needs to be Tensors
         X_train, Y_train = train_loader.dataset.X, train_loader.dataset.y
-        
-        # K data (Calibration)
-        X_valid, Y_valid = loader_k.dataset.X, loader_k.dataset.y 
-        
-        # V data (Prediction)
         X_predict, Y_predict = test_loader.dataset.X, test_loader.dataset.y 
-
-        if X_train.nelement() == 0 or X_valid.nelement() == 0:
-             raise ValueError("Train or Calibration data is empty, cannot proceed.")
-
-        if X_predict.nelement() == 0:
-             print("    Note: Test data (V) is empty, using validation data as placeholder for predictor init.")
-             X_predict, Y_predict = X_valid.clone(), Y_valid.clone()
 
 
         conformal_predictor = SPCI_and_EnbPI(
-            X_train, X_valid, X_predict,
-            Y_train, Y_valid, Y_predict,
+            X_train, X_predict,
+            Y_train, Y_predict,
             model_cls=cfg.CCPO.MODEL_CLASS, loader=temp_loader, scaler=scaler,
             device=cfg.DEVICE, r=cfg.CCPO.LOW_RANK_R,
             use_local_ellipsoid=cfg.CCPO.USE_LOCAL_ELLIPSOID,
@@ -197,8 +186,7 @@ def run_ccpo_direct(
 
         results = conformal_predictor.fit_bootstrap_models_online_multistep(
             B=cfg.CCPO.B, batch_size=cfg.CCPO.BATCH_SIZE, EPOCHS=cfg.CCPO.EPOCHS,
-            lr=cfg.CCPO.LEARNING_RATE, path=cfg.CCPO.WEIGHTS_PATH,
-            patience=cfg.CCPO.PATIENCE, valid_mode=False 
+            lr=cfg.CCPO.LEARNING_RATE, path=cfg.CCPO.WEIGHTS_PATH
         )
 
         print(f"    Calibrating conformal prediction intervals...")
@@ -209,6 +197,7 @@ def run_ccpo_direct(
         calibration_time = time.time() - start_time_calib
 
         mean_coverage_calib, mean_volume_calib, coverage_seq, volume_seq, radius_seq = conformal_predictor.get_results()
+        
         if not radius_seq: 
              raise ValueError("Calibration failed: Radius sequence is empty.")
         radius = float(np.mean(radius_seq))
@@ -287,18 +276,15 @@ def run_ccpo_rolling_counts(
     Run CCPO method for one window in rolling evaluation (MODE=counts).
     Handles both 3-Split and 2-Split logic.
     """
-    split_mode = getattr(cfg, "SPLIT_MODE", "3_split")
-    print(f"  Running CCPO-CCO (Rolling Counts, SPLIT={split_mode})...")
+    prediction_mode = getattr(cfg, "PREDICTION_MODE", "single")
+    print(f"  Running CCPO-CCO (Rolling Counts, SPLIT={prediction_mode})...")
     print(f"    TrainLen={model_train_len}, KLen={K_len}, VLen={V_len}, StartIdx={start_idx}")
 
     start_time_total = time.time()
     n_assets = V_returns_raw.shape[1] if V_returns_raw.ndim > 1 else (1 if V_returns_raw.size > 0 else 0)
 
     try:
-        # 1. Load data
-        # [MODIFIED] Switch loader based on SPLIT_MODE
-        if split_mode == "2_split":
-            # In 2-split: model_train_len contains the K length (merged)
+        if prediction_mode == "single":
             loader = SimpleTimeSeriesDataLoader(base_path=data_path, num_assets=cfg.NUM_ASSETS)
             res = loader.create_all(
                 mode="counts",
@@ -314,8 +300,7 @@ def run_ccpo_rolling_counts(
             train_loader = res['model']['train_loader']
             loader_k = train_loader # Train IS K
         else:
-            # 3-split: Standard logic
-            loader = TimeSeriesDataLoader(base_path=data_path, num_assets=cfg.NUM_ASSETS)
+            loader = DataLoaderMultiStep(base_path=data_path, num_assets=cfg.NUM_ASSETS)
             res = loader.create_all(
                 mode="counts",
                 lookback=lookback,
@@ -329,7 +314,7 @@ def run_ccpo_rolling_counts(
                 resample_freq=cfg.FREQUENCY
             )
             train_loader = res['model']['train_loader']
-            loader_k = res['model']['valid_loader']
+            loader_k = train_loader
 
         test_loader = res['model']['test_loader']
         scaler = res['scaler']
@@ -349,12 +334,11 @@ def run_ccpo_rolling_counts(
         start_time_calib = time.time()
 
         X_train, Y_train = train_loader.dataset.X, train_loader.dataset.y
-        X_valid, Y_valid = loader_k.dataset.X, loader_k.dataset.y 
         X_predict, Y_predict = test_loader.dataset.X, test_loader.dataset.y
 
         conformal_predictor = SPCI_and_EnbPI(
-            X_train, X_valid, X_predict,
-            Y_train, Y_valid, Y_predict,
+            X_train, X_predict,
+            Y_train, Y_predict,
             model_cls=cfg.CCPO.MODEL_CLASS, loader=loader, scaler=scaler,
             device=cfg.DEVICE, r=cfg.CCPO.LOW_RANK_R,
             use_local_ellipsoid=cfg.CCPO.USE_LOCAL_ELLIPSOID,
@@ -366,8 +350,7 @@ def run_ccpo_rolling_counts(
 
         results = conformal_predictor.fit_bootstrap_models_online_multistep(
             B=cfg.CCPO.B, batch_size=cfg.CCPO.BATCH_SIZE, EPOCHS=cfg.CCPO.EPOCHS,
-            lr=cfg.CCPO.LEARNING_RATE, path=cfg.CCPO.WEIGHTS_PATH,
-            patience=cfg.CCPO.PATIENCE, valid_mode=False
+            lr=cfg.CCPO.LEARNING_RATE, path=cfg.CCPO.WEIGHTS_PATH, loss_aggregation=cfg.CCPO.LOSS_AGG, cp_residual_mode='aggregated'
         )
 
         print(f"    Calibrating conformal prediction intervals...")
@@ -448,17 +431,17 @@ def run_ccpo_rolling_dates(
 ) -> Dict[str, Any]:
     """
     Run CCPO method for one window in rolling evaluation (MODE=dates).
-    Handles both 3-Split and 2-Split logic.
+    Handles both single step prediction and multi step prediction logic.
     """
-    split_mode = getattr(cfg, "SPLIT_MODE", "3_split")
-    print(f"  Running CCPO-CCO (Rolling Dates, SPLIT={split_mode})...")
+    prediction_mode = getattr(cfg, "PREDICTION_MODE", "single")
+    print(f"  Running CCPO-CCO (Rolling Dates, SPLIT={prediction_mode})...")
 
     start_time_total = time.time()
     n_assets = V_returns_raw.shape[1] if V_returns_raw.ndim > 1 else (1 if V_returns_raw.size > 0 else 0)
 
     try:
         # 1. Load data
-        if split_mode == "2_split":
+        if prediction_mode == "single":
             # In 2-split: train_end_date is effectively the end of K
             loader = SimpleTimeSeriesDataLoader(base_path=data_path, num_assets=cfg.NUM_ASSETS)
             res = loader.create_all(
@@ -473,9 +456,9 @@ def run_ccpo_rolling_dates(
                 resample_freq=cfg.FREQUENCY
             )
             train_loader = res['model']['train_loader']
-            loader_k = train_loader # Train IS K
+
         else:
-            loader = TimeSeriesDataLoader(base_path=data_path, num_assets=cfg.NUM_ASSETS)
+            loader = DataLoaderMultiStep(base_path=data_path, num_assets=cfg.NUM_ASSETS)
             res = loader.create_all(
                 mode="dates",
                 lookback=lookback,
@@ -489,7 +472,6 @@ def run_ccpo_rolling_dates(
                 resample_freq=cfg.FREQUENCY
             )
             train_loader = res['model']['train_loader']
-            loader_k = res['model']['valid_loader']
 
         test_loader = res['model']['test_loader']
         scaler = res['scaler'] 
@@ -510,12 +492,11 @@ def run_ccpo_rolling_dates(
         start_time_calib = time.time()
 
         X_train, Y_train = train_loader.dataset.X, train_loader.dataset.y
-        X_valid, Y_valid = loader_k.dataset.X, loader_k.dataset.y
         X_predict, Y_predict = test_loader.dataset.X, test_loader.dataset.y
 
         conformal_predictor = SPCI_and_EnbPI(
-            X_train, X_valid, X_predict,
-            Y_train, Y_valid, Y_predict,
+            X_train, X_predict,
+            Y_train, Y_predict,
             model_cls=cfg.CCPO.MODEL_CLASS, loader=loader, scaler=scaler,
             device=cfg.DEVICE, r=cfg.CCPO.LOW_RANK_R,
             use_local_ellipsoid=cfg.CCPO.USE_LOCAL_ELLIPSOID,
@@ -527,8 +508,8 @@ def run_ccpo_rolling_dates(
 
         results = conformal_predictor.fit_bootstrap_models_online_multistep(
             B=cfg.CCPO.B, batch_size=cfg.CCPO.BATCH_SIZE, EPOCHS=cfg.CCPO.EPOCHS,
-            lr=cfg.CCPO.LEARNING_RATE, path=cfg.CCPO.WEIGHTS_PATH,
-            patience=cfg.CCPO.PATIENCE, valid_mode=False
+            lr=cfg.CCPO.LEARNING_RATE, path=cfg.CCPO.WEIGHTS_PATH, 
+            loss_aggregation=cfg.CCPO.LOSS_AGG, cp_residual_mode='aggregated'
         )
 
         print(f"    Calibrating conformal prediction intervals...")

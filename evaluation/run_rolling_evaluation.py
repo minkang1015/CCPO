@@ -17,51 +17,47 @@ def run_rolling_evaluation(
     alpha: float = None,
     cfg: config = config
 ):
-    """
-    Rolling window evaluation supporting both 3-Split (Train/K/V) and 2-Split (Train(K)/V).
-    Refers to specific config sections: cfg.ROLLING.SPLIT_3 or cfg.ROLLING.SPLIT_2
-    """
+
     frequency = frequency or cfg.FREQUENCY
     lookback = lookback or cfg.LOOKBACK
     alpha = alpha or cfg.ALPHA
     
-    # Check Split Mode
-    split_mode = getattr(cfg, "SPLIT_MODE", "3_split")
+    prediction_mode = getattr(cfg, "PREDICTION_MODE", "single")
 
-    if split_mode == "2_split":
+    if prediction_mode == "single":
         if cfg.MODE == "counts":
-            k_info = f"TrK{cfg.ROLLING.SPLIT_2.COUNTS.TRAIN_K_LEN}" # Train+K merged len
-            v_info = f"V{cfg.ROLLING.SPLIT_2.COUNTS.V_LEN}"
+            k_info = f"TrK{cfg.ROLLING.SINGLE.COUNTS.MODEL_TRAIN_LEN}" # Train+K merged len
+            v_info = f"V{cfg.ROLLING.SINGLE.COUNTS.V_LEN}"
         else: # dates
-            k_info = f"TrK{cfg.ROLLING.SPLIT_2.DATES.K_PERIOD_OFFSET}"
-            v_info = f"V{cfg.ROLLING.SPLIT_2.DATES.V_PERIOD_OFFSET}"
-    else: # 3_split (default)
+            k_info = f"TrK{cfg.ROLLING.SINGLE.DATES.K_PERIOD_OFFSET}"
+            v_info = f"V{cfg.ROLLING.SINGLE.DATES.V_PERIOD_OFFSET}"
+    else:
         if cfg.MODE == "counts":
-            k_info = f"K{cfg.ROLLING.SPLIT_3.COUNTS.K_LEN}"
-            v_info = f"V{cfg.ROLLING.SPLIT_3.COUNTS.V_LEN}"
+            k_info = f"K{cfg.ROLLING.MULTI.COUNTS.TRAIN_K_LEN}"
+            v_info = f"V{cfg.ROLLING.MULTI.COUNTS.V_LEN}"
         else: # dates
-            k_info = f"K{cfg.ROLLING.SPLIT_3.DATES.K_PERIOD_OFFSET}"
-            v_info = f"V{cfg.ROLLING.SPLIT_3.DATES.V_PERIOD_OFFSET}"
+            k_info = f"K{cfg.ROLLING.MULTI.DATES.K_PERIOD_OFFSET}"
+            v_info = f"V{cfg.ROLLING.MULTI.DATES.V_PERIOD_OFFSET}"
     
     
     timestamp = datetime.now().strftime("%m%d%H%M")
     result_folder = os.path.join(
         os.path.dirname(__file__),
         "..", "results",
-        f"run_rolling_{cfg.ROLLING.WINDOW_TYPE}_{cfg.MODE}_{split_mode}_{alpha}_{cfg.NUM_ASSETS}_assets_{cfg.SEED}_{k_info}K_{v_info}V"
+        f"run_rolling_{cfg.ROLLING.WINDOW_TYPE}_{cfg.MODE}_{prediction_mode}_{alpha}_{cfg.NUM_ASSETS}_assets_{cfg.SEED}_{k_info}K_{v_info}V"
     )
     os.makedirs(result_folder, exist_ok=True)
 
     log_file = os.path.join(result_folder, "rolling_log.txt")
     logger = DirectLogger(log_file)
-    logger.log_header(title=f"Rolling Evaluation ({cfg.ROLLING.WINDOW_TYPE} / {cfg.MODE} / {split_mode})")
+    logger.log_header(title=f"Rolling Evaluation ({cfg.ROLLING.WINDOW_TYPE} / {cfg.MODE} / {prediction_mode})")
 
     original_stdout = sys.stdout
     sys.stdout = logger
 
     try:
         print(f"🎯 Rolling Window Evaluation ({cfg.ROLLING.WINDOW_TYPE} / {cfg.MODE})")
-        print(f"   Split Mode: {split_mode}")
+        print(f"   Prediction Mode: {prediction_mode}")
         print(f"   Frequency: {frequency}, Lookback: {lookback}, Alpha: {alpha}")
 
         # Load Full Data
@@ -87,14 +83,14 @@ def run_rolling_evaluation(
         # ==============================================================================
         
         # ---------------------
-        # CASE A: 2-SPLIT (Train(K) -> Test(V))
+        # CASE A: Single Step Prediction
         # ---------------------
-        if split_mode == "2_split":
-            cfg_roll = cfg.ROLLING.SPLIT_2  # Load 2-Split Rolling Config
-            print(f"\n[2-Split Mode] Generating windows where Train == K...")
+        if prediction_mode == "single":
+            cfg_roll = cfg.ROLLING.SINGLE  # Load Single Rolling Config
+            print(f"\n[Single Step Mode] Generating windows...")
             
             if cfg.MODE == "counts":
-                k_len = cfg_roll.COUNTS.TRAIN_K_LEN
+                k_len = cfg_roll.COUNTS.MODEL_TRAIN_LEN
                 v_len = cfg_roll.COUNTS.V_LEN
                 step_size = cfg_roll.COUNTS.STEP_SIZE
                 
@@ -111,7 +107,7 @@ def run_rolling_evaluation(
                         
                     window_definitions.append({
                         "mode": "counts",
-                        "split": "2_split",
+                        "prediction": "single",
                         "k_start_raw_idx": current_idx, 
                         "k_end_raw_idx": k_end_idx,     
                         "v_start_raw_idx": k_end_idx,
@@ -146,7 +142,7 @@ def run_rolling_evaluation(
                          
                      window_definitions.append({
                         "mode": "dates",
-                        "split": "2_split",
+                        "prediction": "single",
                         "k_start_date": current_start,
                         "k_end_date": k_end_date,
                         "v_start_date": k_end_date,
@@ -157,15 +153,15 @@ def run_rolling_evaluation(
                      current_start += step_offset
 
         # ---------------------
-        # CASE B: 3-SPLIT (Train -> K -> V)
+        # CASE B: Multi Step Prediction
         # ---------------------
         else:
-            cfg_roll = cfg.ROLLING.SPLIT_3  # Load 3-Split Rolling Config
-            print(f"\n[3-Split Mode] Generating windows (Train -> K -> V)...")
+            cfg_roll = cfg.ROLLING.MULTI # Load Multi Rolling Config
+            print(f"\n[Multi-step Mode] Generating windows...")
 
             if cfg.MODE == "counts":
-                initial_train_len = cfg_roll.COUNTS.MODEL_TRAIN_LEN
-                k_raw_len = cfg_roll.COUNTS.K_LEN
+                initial_train_len = cfg_roll.COUNTS.TRAIN_K_LEN
+                k_raw_len = cfg_roll.COUNTS.TRAIN_K_LEN
                 v_raw_len = cfg_roll.COUNTS.V_LEN
                 step_size = cfg_roll.COUNTS.STEP_SIZE
                 
@@ -193,7 +189,7 @@ def run_rolling_evaluation(
 
                     window_definitions.append({
                         "mode": "counts",
-                        "split": "3_split",
+                        "prediction": "multi",
                         "train_start_idx": train_start_idx,
                         "train_len": current_train_len,
                         "K_len": k_raw_len,
@@ -206,7 +202,7 @@ def run_rolling_evaluation(
                     current_k_start_idx += step_size
 
             elif cfg.MODE == "dates":
-                train_offset = pd.tseries.frequencies.to_offset(cfg_roll.DATES.MODEL_TRAIN_OFFSET)
+                train_offset = pd.tseries.frequencies.to_offset(cfg_roll.DATES.K_PERIOD_OFFSET)
                 k_offset = pd.tseries.frequencies.to_offset(cfg_roll.DATES.K_PERIOD_OFFSET)
                 v_offset = pd.tseries.frequencies.to_offset(cfg_roll.DATES.V_PERIOD_OFFSET)
                 step_offset = pd.tseries.frequencies.to_offset(cfg_roll.DATES.STEP_OFFSET)
@@ -233,7 +229,7 @@ def run_rolling_evaluation(
 
                     window_definitions.append({
                         "mode": "dates",
-                        "split": "3_split",
+                        "prediction": "multi",
                         "train_start_date": train_start_date,
                         "train_end_date": train_end_date,
                         "k_start_date": train_end_date,
@@ -251,7 +247,7 @@ def run_rolling_evaluation(
         for i, window in enumerate(window_definitions):
             window_num = i + 1
             print(f"\n{'='*80}")
-            print(f"RUNNING WINDOW {window_num}/{len(window_definitions)} ({window['split']} / {cfg.MODE})")
+            print(f"RUNNING WINDOW {window_num}/{len(window_definitions)} ({window['prediction']} / {cfg.MODE})")
 
             # 1) Slice Data
             if window["mode"] == "counts":
@@ -262,8 +258,6 @@ def run_rolling_evaluation(
                 V_data_raw = full_data_resampled.iloc[v_s : v_e]
                 
                 print(f"  Idx: K=[{k_s}:{k_e}], V=[{v_s}:{v_e}]")
-                if split_mode == "3_split":
-                    print(f"       Train=[{window['train_start_idx']}:{k_s}]")
                 
             else: # dates
                 k_start, k_end = window["k_start_date"], window["k_end_date"]
@@ -273,8 +267,6 @@ def run_rolling_evaluation(
                 V_data_raw = full_data_resampled.loc[v_start : v_end - pd.Timedelta(nanoseconds=1)]
                 
                 print(f"  Dates: K=[{k_start.date()} ~ {k_end.date()}], V=[{v_start.date()} ~ {v_end.date()}]")
-                if split_mode == "3_split":
-                    print(f"         Train=[{window['train_start_date'].date()} ~ {window['train_end_date'].date()}]")
 
             if K_data_raw.empty or V_data_raw.empty:
                 print("⚠️ Skipping empty window.")

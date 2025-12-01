@@ -20,14 +20,13 @@ if __name__ == "__main__":
     set_seed(config.SEED)
 
     # 2. Retrieve and Validate Configuration
-    # Safe retrieval of SPLIT_MODE (defaults to "3_split" if missing)
-    split_mode = getattr(config, "SPLIT_MODE", "3_split").lower()
+    prediction_mode = getattr(config, "PREDICTION_TYPE", "single").lower()
     data_mode = config.MODE.lower()
     eval_mode = config.EVALUATION_MODE.lower()
 
     # --- Validation Block ---
-    if split_mode not in ["2_split", "3_split"]:
-        raise ValueError(f"Invalid SPLIT_MODE: '{split_mode}'. Must be '2_split' or '3_split'.")
+    if prediction_mode not in ["single", "multi"]:
+        raise ValueError(f"Invalid SPLIT_MODE: '{prediction_mode}'. Must be 'single' or 'multi'.")
     
     if data_mode not in ["counts", "dates"]:
         raise ValueError(f"Invalid MODE: '{data_mode}'. Must be 'counts' or 'dates'.")
@@ -42,7 +41,7 @@ if __name__ == "__main__":
     print(f"{'='*60}")
     print(f" 🔹 Evaluation Type : {eval_mode.upper()}") # Direct or Rolling
     print(f" 🔹 Data Mode       : {data_mode.upper()}")  # Counts or Dates
-    print(f" 🔹 Split Mode      : {split_mode.upper()}") # 2_SPLIT or 3_SPLIT
+    print(f" 🔹 Split Mode      : {prediction_mode.upper()}") # 2_SPLIT or 3_SPLIT
     print(f" 🔹 Asset Count     : {config.NUM_ASSETS}")
     print(f" 🔹 Device          : {config.DEVICE}")
     print(f"{'='*60}\n")
