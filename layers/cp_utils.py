@@ -134,9 +134,15 @@ def binning_use_RF_quantile_regr(quantile_regr, cov_mat_est, Xtrain, Ytrain, fea
     return i_star, beta_ls[i_star], wid_left, wid_right
 
 
-def train_models(model_cls, data_loader, EPOCHS=100, lr=1e-3, 
-                 path='./weights/'):
-    
+def train_models(
+    model_cls,
+    data_loader,
+    EPOCHS: int = 100,
+    lr: float = 1e-3,
+    path: str = './weights/',
+    loss_aggregation: str = 'mean',        # 'mean' or 'last'
+    cp_residual_mode: str = 'aggregated',  # 일단 시그니처에만 — 필요하면 나중에 사용
+):
     os.makedirs(path, exist_ok=True)
 
     models = []
@@ -222,7 +228,21 @@ def train_models(model_cls, data_loader, EPOCHS=100, lr=1e-3,
                 
                 optimizer.zero_grad()
                 preds = model_b(X_batch)
-                loss = criterion(preds, y_batch)
+
+                # 🔹 multi-step일 때 loss_aggregation 반영
+                if preds.ndim == 3 and y_batch.ndim == 3:
+                    # [B, horizon, d]
+                    if loss_aggregation == 'last':
+                        loss = criterion(preds[:, -1, :], y_batch[:, -1, :])
+                    elif loss_aggregation == 'mean':
+                        # MSELoss 자체가 전체 차원 평균이라 이대로 써도 됨
+                        loss = criterion(preds, y_batch)
+                    else:
+                        raise ValueError(f"Unsupported loss_aggregation: {loss_aggregation}")
+                else:
+                    # single-step or flattened case
+                    loss = criterion(preds, y_batch)
+
                 loss.backward()
                 optimizer.step()
                 total_train_loss += loss.item()
@@ -269,7 +289,9 @@ def compute_residuals(model_type, valid_loader, test_loader, models, loader, dev
             print("Warning: 'inverse_transform' method not found in loader. Returning scaled data.")
             return tensor_data
 
-    Yv = gather_targets(valid_loader)  # [N_valid, L, d] (CPU)
+    # LOO 방식: valid_loader가 None이면 valid 부분 스킵
+    if valid_loader is not None:
+        Yv = gather_targets(valid_loader)  # [N_valid, L, d] (CPU)
     Yt = gather_targets(test_loader)   # [N_test,  L, d]
 
     Pv_list, Pt_list = [], []
@@ -278,12 +300,13 @@ def compute_residuals(model_type, valid_loader, test_loader, models, loader, dev
             m.eval()
             m.to(device)
 
-            # Validation set 예측
-            outs_v = []
-            for Xb, yb, _, _ in valid_loader:
-                Xb, _ = prep_inputs(Xb, yb)
-                outs_v.append(m(Xb).detach().cpu())
-            Pv_list.append(torch.cat(outs_v, dim=0))
+            # Validation set 예측 (valid_loader가 있을 때만)
+            if valid_loader is not None:
+                outs_v = []
+                for Xb, yb, _, _ in valid_loader:
+                    Xb, _ = prep_inputs(Xb, yb)
+                    outs_v.append(m(Xb).detach().cpu())
+                Pv_list.append(torch.cat(outs_v, dim=0))
 
             # Test set 예측
             outs_t = []
@@ -292,22 +315,32 @@ def compute_residuals(model_type, valid_loader, test_loader, models, loader, dev
                 outs_t.append(m(Xb).detach().cpu())
             Pt_list.append(torch.cat(outs_t, dim=0))
 
-    Pv = torch.stack(Pv_list).mean(dim=0)  # [N_valid, L, d]
     Pt = torch.stack(Pt_list).mean(dim=0)  # [N_test,  L, d]
-
-    Yv_inv = inverse(Yv, loader)
-    Pv_inv = inverse(Pv, loader)
     Yt_inv = inverse(Yt, loader)
     Pt_inv = inverse(Pt, loader)
-
-    Rv = Yv_inv - Pv_inv
     Rt = Yt_inv - Pt_inv
 
-    return {
-        "valid": {"y_true": Yv_inv, "y_pred": Pv_inv, "resid": Rv},
-        "test":  {"y_true": Yt_inv, "y_pred": Pt_inv, "resid": Rt},
-        "raw":   {
-            "y_valid_scaled": Yv, "yhat_valid_scaled": Pv,
-            "y_test_scaled":  Yt, "yhat_test_scaled":  Pt,
-        },
-    }
+    # Valid 결과 처리: valid_loader가 있으면 계산, 없으면 None
+    if valid_loader is not None:
+        Pv = torch.stack(Pv_list).mean(dim=0)  # [N_valid, L, d]
+        Yv_inv = inverse(Yv, loader)
+        Pv_inv = inverse(Pv, loader)
+        Rv = Yv_inv - Pv_inv
+        return {
+            "valid": {"y_true": Yv_inv, "y_pred": Pv_inv, "resid": Rv},
+            "test":  {"y_true": Yt_inv, "y_pred": Pt_inv, "resid": Rt},
+            "raw":   {
+                "y_valid_scaled": Yv, "yhat_valid_scaled": Pv,
+                "y_test_scaled":  Yt, "yhat_test_scaled":  Pt,
+            },
+        }
+    else:
+        # LOO 방식: valid 없음
+        return {
+            "valid": {"y_true": None, "y_pred": None, "resid": None},
+            "test":  {"y_true": Yt_inv, "y_pred": Pt_inv, "resid": Rt},
+            "raw":   {
+                "y_valid_scaled": None, "yhat_valid_scaled": None,
+                "y_test_scaled":  Yt, "yhat_test_scaled":  Pt,
+            },
+        }

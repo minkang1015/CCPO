@@ -298,7 +298,7 @@ def run_ccpo_rolling_counts(
                 resample_freq=cfg.FREQUENCY
             )
             train_loader = res['model']['train_loader']
-            loader_k = train_loader # Train IS K
+            
         else:
             loader = DataLoaderMultiStep(base_path=data_path, num_assets=cfg.NUM_ASSETS)
             res = loader.create_all(

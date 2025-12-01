@@ -26,7 +26,7 @@ def run_rolling_evaluation(
 
     if prediction_mode == "single":
         if cfg.MODE == "counts":
-            k_info = f"TrK{cfg.ROLLING.SINGLE.COUNTS.MODEL_TRAIN_LEN}" # Train+K merged len
+            k_info = f"TrK{cfg.ROLLING.SINGLE.COUNTS.TRAIN_K_LEN}" # Train+K merged len
             v_info = f"V{cfg.ROLLING.SINGLE.COUNTS.V_LEN}"
         else: # dates
             k_info = f"TrK{cfg.ROLLING.SINGLE.DATES.K_PERIOD_OFFSET}"
@@ -90,7 +90,7 @@ def run_rolling_evaluation(
             print(f"\n[Single Step Mode] Generating windows...")
             
             if cfg.MODE == "counts":
-                k_len = cfg_roll.COUNTS.MODEL_TRAIN_LEN
+                k_len = cfg_roll.COUNTS.TRAIN_K_LEN
                 v_len = cfg_roll.COUNTS.V_LEN
                 step_size = cfg_roll.COUNTS.STEP_SIZE
                 

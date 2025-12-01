@@ -6,7 +6,7 @@ from layers.predictors import LSTMModel, DLinear, MLP
 # ==========================================
 # "3_split": Original (Train / Valid(K) / Test(V))
 # "2_split": New (Train(K) / Test(V)) -> Train data is also used for Calibration(K)
-PREDICTION_TYPE = "single"  # ["single", "multi"]
+PREDICTION_TYPE = "multi"  # ["single", "multi"]
 
 # ----  EVALUATION MODE ----
 EVALUATION_MODE = "rolling"  # ["direct", "rolling"]
@@ -18,7 +18,8 @@ MODE = "counts"              # ["dates", "counts"]
 DATA_PATH = "./data"
 FREQUENCY = "weekly"
 LOOKBACK = 52
-NUM_ASSETS = 30     # [5, 10, 30, 49]
+HORIZON = 5     # Used only for Multi-Step Prediction (The number of steps to predict)
+NUM_ASSETS = 5     # [5, 10, 30, 49]
 ALPHA = 0.05
 SEED = 2025
 BATCH_SIZE = 32 
@@ -63,27 +64,24 @@ class ROLLING:
     # ----------------------------------------
     # [Option A] Signle Step Rolling Settings
     # ----------------------------------------
-    # Used when SPLIT_MODE = "3_split"
+    # Used when PRDICTION_MODE = "single"
     class SINGLE:
         class COUNTS:
-            MODEL_TRAIN_LEN = 52 * 15       # Train Length
-            K_LEN = 52 * 10                 # K(Calib) Length
-            V_LEN = int(52 * 4)             # V(Test) Length
-            STEP_SIZE = int(52 * 4)         # Step size
+            TRAIN_K_LEN = 52 * 10           # Merged Train(K) Length
+            V_LEN = int(52 * 2)             # V(Test) Length
+            STEP_SIZE = int(52 * 2)         # Step size
 
         class DATES:
-            MODEL_TRAIN_OFFSET = "10Y" 
-            K_PERIOD_OFFSET = "5Y"   
+            K_PERIOD_OFFSET = "15Y"         # Merged Train(K) Offset
             V_PERIOD_OFFSET = "1Y"   
             STEP_OFFSET = "1Y"       
             ROLLING_START_DATE = "2000-01-01"
-            ROLLING_END_DATE = None           
+            ROLLING_END_DATE = None        
 
     # ----------------------------------------
     # [Option B] Multi Step Rolling Settings
     # ----------------------------------------
-    # Used when SPLIT_MODE = "2_split"
-    # Note: TRAIN_K_LEN defines the merged Train+K period length.
+    # Used when PRDICTION_MODE = "multi"
     class MULTI:
         class COUNTS:
             TRAIN_K_LEN = 52 * 10           # Merged Train(K) Length
@@ -109,14 +107,13 @@ class CPP:
 # ---- CCPO Configuration ----
 class CCPO:
     MODEL_CLASS = LSTMModel
-    LOW_RANK_R = 24      
+    LOW_RANK_R = 4      
     USE_LOCAL_ELLIPSOID = False     
-    B = 20       
+    B = 2       
     BATCH_SIZE = 32    
-    EPOCHS = 30     
+    EPOCHS = 10     
     LEARNING_RATE = 1e-4        
     WEIGHTS_PATH = "./weights/ccpo"     
-    PATIENCE = 10
     USE_SPCI = True     
     PAST_WINDOW = 52    
     GAMMA = 1.0     
