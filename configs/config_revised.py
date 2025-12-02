@@ -4,7 +4,7 @@ from layers.predictors import LSTMModel, DLinear, MLP
 # ==========================================
 # PREDICTION MODE SETTING
 # ==========================================
-PREDICTION_MODE = "multi"  # ["single", "multi"]
+PREDICTION_MODE = "single"  # ["single", "multi"]
 
 # ----  EVALUATION MODE ----
 EVALUATION_MODE = "rolling"  # ["direct", "rolling"]
@@ -114,7 +114,7 @@ class CCPO:
     QRF_N_ESTIMATORS = 50
     QRF_MAX_DEPTH = 5
     CRITERION = "squared_error"
-    LOSS_AGG = "last"    # ["mean", "last"]
+    LOSS_AGG = "mean"    # ["mean", "last"]     # mean in single, last in multi
     HORIZON = 5     # Used only for Multi-Step Prediction (The number of steps to predict)
 
 
