@@ -114,7 +114,7 @@ class CCPO:
     QRF_N_ESTIMATORS = 50
     QRF_MAX_DEPTH = 5
     CRITERION = "squared_error"
-    LOSS_AGG = "mean"    # ["mean", "last"]
+    LOSS_AGG = "last"    # ["mean", "last"]
     HORIZON = 5     # Used only for Multi-Step Prediction (The number of steps to predict)
 
 

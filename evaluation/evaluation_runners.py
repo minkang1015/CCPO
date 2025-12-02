@@ -209,7 +209,13 @@ def run_ccpo_direct(
         print(f"    Optimizing portfolio for each of {len(V_dates)} test periods (V)...")
         start_time_opt = time.time()
         portfolios_list = []
-        mu_pred_raw = results['test']['preds'].squeeze(1).cpu().numpy()
+        
+        if prediction_mode == "single":
+            mu_pred_raw = results["test"]["y_pred"].squeeze(1).cpu().numpy()        # [n_test, n_assets]
+        elif prediction_mode == "multi":
+            mu_pred_raw = (1 + conformal_predictor.test_pred_raw).prod(dim=1).sub(1).detach().cpu().numpy() # [n_test, n_assets]
+        else:
+            raise ValueError(f"Unknown prediction mode: {prediction_mode}")
         
         for v_idx, v_date in enumerate(V_dates):
             # mu_pred_raw matches V_dates length
@@ -373,7 +379,12 @@ def run_ccpo_rolling_counts(
         start_time_opt = time.time()
         portfolios_list = []
 
-        mu_pred_raw = results["test"]["y_pred"].squeeze(1).cpu().numpy()
+        if prediction_mode == "single":
+            mu_pred_raw = results["test"]["y_pred"].squeeze(1).cpu().numpy()        # [n_test, n_assets]
+        elif prediction_mode == "multi":
+            mu_pred_raw = (1 + conformal_predictor.test_pred_raw).prod(dim=1).sub(1).detach().cpu().numpy() # [n_test, n_assets]
+        else:
+            raise ValueError(f"Unknown prediction mode: {prediction_mode}")
         
         for v_idx, v_date in enumerate(V_dates):
             current_mu = mu_pred_raw[v_idx] if v_idx < len(mu_pred_raw) else np.zeros(n_assets)
@@ -532,7 +543,12 @@ def run_ccpo_rolling_dates(
         start_time_opt = time.time()
         portfolios_list = []
 
-        mu_pred_raw = results["test"]["y_pred"].squeeze(1).cpu().numpy()
+        if prediction_mode == "single":
+            mu_pred_raw = results["test"]["y_pred"].squeeze(1).cpu().numpy()        # [n_test, n_assets]
+        elif prediction_mode == "multi":
+            mu_pred_raw = (1 + conformal_predictor.test_pred_raw).prod(dim=1).sub(1).detach().cpu().numpy() # [n_test, n_assets]
+        else:
+            raise ValueError(f"Unknown prediction mode: {prediction_mode}")
         
         for v_idx, v_date in enumerate(V_dates):
             current_mu = mu_pred_raw[v_idx] if v_idx < len(mu_pred_raw) else np.zeros(n_assets)

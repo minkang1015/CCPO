@@ -144,8 +144,7 @@ class SPCI_and_EnbPI():
             EPOCHS=EPOCHS,
             lr=lr, 
             path=path, 
-            loss_aggregation=loss_aggregation,
-            cp_residual_mode ='mean'
+            loss_aggregation='mean'     # we have to use 'mean'
         )
         
         self.models = models
@@ -213,9 +212,13 @@ class SPCI_and_EnbPI():
         if cp_residual_mode == 'aggregated' and train_pred_concat.ndim == 3:
             # Aggregate multi-step predictions/residuals
             if loss_aggregation == 'last':
-                self.train_pred = train_pred_concat[:, -1, :]  # [N, d]
-                self.train_resid = train_resid_concat[:, -1, :]  # [N, d]
-                print(f"CP Residual Mode: Using LAST horizon step for calibration")
+                pred_weekly = (1 + train_pred_concat).prod(dim=1) - 1
+                self.train_pred = pred_weekly
+                Y_train_concat = train_pred_concat + train_resid_concat
+                true_weekly = (1 + Y_train_concat).prod(dim=1) - 1
+                self.train_resid = true_weekly - pred_weekly
+                print(f"CP Residual Mode: Using GEOMETRIC aggregation (Weekly Return) for Calibration")
+                
             else:  # 'mean'
                 self.train_pred = train_pred_concat.mean(dim=1)  # [N, d]
                 self.train_resid = train_resid_concat.mean(dim=1)  # [N, d]
@@ -249,15 +252,22 @@ class SPCI_and_EnbPI():
             loader=self.loader
         )
         
-        # compute_residuals already returns inverse-transformed (raw) predictions/residuals
         test_pred_raw = result_test["test"]["y_pred"].to(device)
         test_resid_raw = result_test["test"]["resid"].to(device)
+        
+        self.train_pred_raw = train_pred_concat
+        self.test_pred_raw = test_pred_raw
         
         # Apply CP residual mode to test predictions/residuals
         if cp_residual_mode == 'aggregated' and test_pred_raw.ndim == 3:
             if loss_aggregation == 'last':
-                self.test_pred = test_pred_raw[:, -1, :]  # [N_test, d]
-                self.test_resid = test_resid_raw[:, -1, :]  # [N_test, d]
+                pred_weekly = (1 + self.test_pred_raw).prod(dim=1) - 1
+                self.test_pred = pred_weekly
+
+                Y_test_concat = self.test_pred_raw + test_resid_raw
+                true_weekly = (1 + Y_test_concat).prod(dim=1) - 1
+
+                self.test_resid = true_weekly - pred_weekly                
             else:  # 'mean'
                 self.test_pred = test_pred_raw.mean(dim=1)  # [N_test, d]
                 self.test_resid = test_resid_raw.mean(dim=1)  # [N_test, d]
@@ -265,7 +275,6 @@ class SPCI_and_EnbPI():
             self.test_pred = test_pred_raw
             self.test_resid = test_resid_raw
         
-        # Extract dimensions
         if self.train_pred.ndim == 3:
             n_train, self.pred_len, self.d = self.train_pred.shape
         else:
@@ -277,10 +286,8 @@ class SPCI_and_EnbPI():
         else:
             n_test = self.test_pred.shape[0]
         
-        # === STEP 4: Compute Non-conformity Scores ===
         print(f"Computing non-conformity scores for {n_train} train samples (LOO)...")
         self.get_test_et = False
-        # Reshape: handle both [N, d] and [N, horizon, d]
         train_resid_flat = self.train_resid.reshape(-1, self.d).detach().cpu().numpy()
         self.train_et = self.get_et(train_resid_flat)
         

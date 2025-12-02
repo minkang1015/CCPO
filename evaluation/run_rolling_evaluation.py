@@ -31,7 +31,8 @@ def run_rolling_evaluation(
         else: # dates
             k_info = f"TrK{cfg.ROLLING.SINGLE.DATES.K_PERIOD_OFFSET}"
             v_info = f"V{cfg.ROLLING.SINGLE.DATES.V_PERIOD_OFFSET}"
-    else:
+            
+    else:   # multi
         if cfg.MODE == "counts":
             k_info = f"K{cfg.ROLLING.MULTI.COUNTS.TRAIN_K_LEN}"
             v_info = f"V{cfg.ROLLING.MULTI.COUNTS.V_LEN}"
@@ -44,7 +45,7 @@ def run_rolling_evaluation(
     result_folder = os.path.join(
         os.path.dirname(__file__),
         "..", "results",
-        f"run_rolling_{cfg.ROLLING.WINDOW_TYPE}_{cfg.MODE}_{prediction_mode}_{alpha}_{cfg.NUM_ASSETS}_assets_{cfg.SEED}_{k_info}K_{v_info}V"
+        f"run_rolling_{cfg.ROLLING.WINDOW_TYPE}_{cfg.MODE}_{prediction_mode}_{alpha}_{cfg.NUM_ASSETS}_assets_{cfg.SEED}_{k_info}K_{v_info}V_{timestamp}"
     )
     os.makedirs(result_folder, exist_ok=True)
 

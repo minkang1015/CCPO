@@ -17,9 +17,10 @@ from utils.metrics import calculate_portfolio_metrics, compare_methods, print_po
 from utils.visualization import create_all_plots
 from utils.evaluate import generate_rolling_splits, print_rolling_splits
 from layers.cp_utils import set_seed, train_models, compute_residuals
-from layers.multi_cp import SPCI_and_EnbPI
+from layers.multi_cp_new import SPCI_and_EnbPI
 from layers.predictors import MLP, DLinear, LSTMModel
 from configs.config_revised import CCPO as config_cp
+from configs.config_revised import SEED, PREDICTION_MODE
 
 
 # Logging utility (same as run_cpp)
@@ -67,7 +68,7 @@ class CCPOPortfolioOptimizer:
                  n_estimators: int = 50,
                  max_d: int = 5,
                  criterion: str = 'squared_error'
-                 ):     # 수정
+                 ): 
         """
         Args:
             alpha: Miscoverage rate (e.g., 0.1 for 90% coverage)
@@ -86,112 +87,132 @@ class CCPOPortfolioOptimizer:
         self.max_d = max_d
         self.criterion = criterion
         
-    def fit_and_calibrate(self,
-                         X_K: np.ndarray,
-                         X_L: np.ndarray,
-                         X_V: np.ndarray,
-                         y_K: np.ndarray,
-                         y_L: np.ndarray,
-                         y_V: np.ndarray,
-                         loader: TimeSeriesDataLoader,
-                         scaler,
-                         B: int = 30,
-                         batch_size: int = 32,
-                         EPOCHS: int = 100,
-                         lr: float = 1e-3,
-                         path: str = './weights/',
-                         patience: int = 10) -> Dict:
-        """
-        Step 1 & 2: Fit time series models and calibrate with conformal prediction
+    # def fit_and_calibrate(self,
+    #                      X_K: np.ndarray,
+    #                      X_L: np.ndarray,
+    #                      X_V: np.ndarray,
+    #                      y_K: np.ndarray,
+    #                      y_L: np.ndarray,
+    #                      y_V: np.ndarray,
+    #                      loader: TimeSeriesDataLoader,
+    #                      scaler,
+    #                      B: int = 30,
+    #                      batch_size: int = 32,
+    #                      EPOCHS: int = 100,
+    #                      lr: float = 1e-3,
+    #                      path: str = './weights/',
+    #                      patience: int = 10) -> Dict:
+    #     """
+    #     Step 1 & 2: Fit time series models and calibrate with conformal prediction
         
-        Args:
-            X_K, y_K: Training data (K samples)
-            X_L, y_L: Calibration data (L samples)
-            X_V, y_V: Validation data (V samples)
-            loader: Data loader for preprocessing
-            scaler: Fitted scaler
-            B: Number of bootstrap models
+    #     Args:
+    #         X_K, y_K: Training data (K samples)
+    #         X_L, y_L: Calibration data (L samples)
+    #         X_V, y_V: Validation data (V samples)
+    #         loader: Data loader for preprocessing
+    #         scaler: Fitted scaler
+    #         B: Number of bootstrap models
             
-        Returns:
-            result: {
-                'mu_pred_L': predicted mean on L set,
-                'mu_pred_V': predicted mean on V set,
-                'cov_matrix': covariance matrix,
-                'radius': conformal radius,
-                'coverage': empirical coverage on V set,
-                'y_pred_V': predictions on V set,
-                'y_true_V': true values on V set
-            }
-        """
-        X_K_t = torch.FloatTensor(X_K)
-        y_K_t = torch.FloatTensor(y_K).unsqueeze(1) if y_K.ndim == 2 else torch.FloatTensor(y_K).unsqueeze(1).unsqueeze(2)
-        X_L_t = torch.FloatTensor(X_L)
-        y_L_t = torch.FloatTensor(y_L).unsqueeze(1) if y_L.ndim == 2 else torch.FloatTensor(y_L).unsqueeze(1).unsqueeze(2)
-        X_V_t = torch.FloatTensor(X_V)
-        y_V_t = torch.FloatTensor(y_V).unsqueeze(1) if y_V.ndim == 2 else torch.FloatTensor(y_V).unsqueeze(1).unsqueeze(2)
+    #     Returns:
+    #         result: {
+    #             'mu_pred_L': predicted mean on L set,
+    #             'mu_pred_V': predicted mean on V set,
+    #             'cov_matrix': covariance matrix,
+    #             'radius': conformal radius,
+    #             'coverage': empirical coverage on V set,
+    #             'y_pred_V': predictions on V set,
+    #             'y_true_V': true values on V set
+    #         }
+    #     """
+    #     X_K_t = torch.FloatTensor(X_K)
+    #     y_K_t = torch.FloatTensor(y_K).unsqueeze(1) if y_K.ndim == 2 else torch.FloatTensor(y_K).unsqueeze(1).unsqueeze(2)
+    #     X_L_t = torch.FloatTensor(X_L)
+    #     y_L_t = torch.FloatTensor(y_L).unsqueeze(1) if y_L.ndim == 2 else torch.FloatTensor(y_L).unsqueeze(1).unsqueeze(2)
+    #     X_V_t = torch.FloatTensor(X_V)
+    #     y_V_t = torch.FloatTensor(y_V).unsqueeze(1) if y_V.ndim == 2 else torch.FloatTensor(y_V).unsqueeze(1).unsqueeze(2)
         
-        # Initialize conformal predictor
-        conformal_predictor = SPCI_and_EnbPI(
-            X_K_t, X_L_t, X_V_t,
-            y_K_t, y_L_t, y_V_t,
-            model_cls=self.model_cls,
-            loader=loader,
-            scaler=scaler,
-            device=self.device,
-            r=self.r,
-            use_local_ellipsoid=self.use_local_ellipsoid,
-            bins=self.bins,
-            n_estimators=self.n_estimators,
-            max_d=self.max_d,
-            criterion=self.criterion
-        )
+    #     # Initialize conformal predictor
+    #     conformal_predictor = SPCI_and_EnbPI(
+    #         X_K_t, X_L_t, X_V_t,
+    #         y_K_t, y_L_t, y_V_t,
+    #         model_cls=self.model_cls,
+    #         loader=loader,
+    #         scaler=scaler,
+    #         device=self.device,
+    #         r=self.r,
+    #         use_local_ellipsoid=self.use_local_ellipsoid,
+    #         bins=self.bins,
+    #         n_estimators=self.n_estimators,
+    #         max_d=self.max_d,
+    #         criterion=self.criterion
+    #     )
         
-        # Fit bootstrap models
-        print("  Fitting bootstrap models...")
-        results_fit = conformal_predictor.fit_bootstrap_models_online_multistep(
-            B=B,
-            batch_size=batch_size,
-            EPOCHS=EPOCHS,
-            lr=lr,
-            path=path,
-            patience=patience,
-            valid_mode=True
-        )
+    #     # Fit bootstrap models
+    #     print("  Fitting bootstrap models...")
+    #     results_fit = conformal_predictor.fit_bootstrap_models_online_multistep(
+    #         B=B,
+    #         batch_size=batch_size,
+    #         EPOCHS=EPOCHS,
+    #         lr=lr,
+    #         path=path,
+    #         patience=patience,
+    #         valid_mode=True
+    #     )
         
-        # Compute prediction intervals
-        print("  Computing conformal prediction intervals...")
-        conformal_predictor.compute_Widths_Ensemble_online(
-            alpha=self.alpha,
-            smallT=False,
-            use_SPCI=config_cp.USE_SPCI,
-            past_window=config_cp.PAST_WINDOW,
-            random_state=config_cp.SEED
-        )
+    #     # Compute prediction intervals
+    #     print("  Computing conformal prediction intervals...")
+    #     conformal_predictor.compute_Widths_Ensemble_online(
+    #         alpha=self.alpha,
+    #         smallT=False,
+    #         use_SPCI=config_cp.USE_SPCI,
+    #         past_window=config_cp.PAST_WINDOW,
+    #         random_state=SEED
+    #     )
         
-        # Get results
-        mean_coverage, mean_volume, coverage_seq, volume_seq, radius_seq = conformal_predictor.get_results()
+    #     # Get results
+    #     mean_coverage, mean_volume, coverage_seq, volume_seq, radius_seq = conformal_predictor.get_results()
         
-        
-        # mu_pred_L = results_fit['valid']['y_pred']
-        # mu_pred_V = results_fit['test']['y_pred']
-        mu_pred_L = conformal_predictor.valid_pred.mean(dim=0).squeeze().detach().cpu().numpy()  # (d,)
-        mu_pred_V = conformal_predictor.test_pred.mean(dim=0).squeeze().detach().cpu().numpy()   # (d,)
-        cov_matrix = conformal_predictor.global_cov          
+    #     if PREDICTION_MODE == 'single':
+    #         mu_pred_L = conformal_predictor.train_pred_raw.mean(dim=0).squeeze().detach().cpu().numpy()  # (d,)
+    #         mu_pred_V = conformal_predictor.test_pred_raw.mean(dim=0).squeeze().detach().cpu().numpy()   # (d,)
+    #         cov_matrix = conformal_predictor.global_cov          
 
-        y_pred_V = conformal_predictor.test_pred.mean(dim=0).squeeze().detach().cpu().numpy()
-        y_true_V = conformal_predictor.Y_predict.squeeze().numpy()
-        
-        return {
-            'mu_pred_L': mu_pred_L,
-            'mu_pred_V': mu_pred_V,
-            'cov_matrix': cov_matrix,
-            'radius': radius_seq,
-            'coverage': mean_coverage,
-            'volume': mean_volume,
-            'y_pred_V': y_pred_V,
-            'y_true_V': y_true_V,
-            'status': 'optimal'
-        }
+    #         y_pred_V = conformal_predictor.test_pred.mean(dim=0).squeeze().detach().cpu().numpy()   # (d,)
+    #         y_true_V = conformal_predictor.Y_test.squeeze().numpy()
+            
+    #         return {
+    #             'mu_pred_K': mu_pred_L,
+    #             'mu_pred_V': mu_pred_V,
+    #             'cov_matrix': cov_matrix,
+    #             'radius': radius_seq,
+    #             'coverage': mean_coverage,
+    #             'volume': mean_volume,
+    #             'y_pred_V': y_pred_V,
+    #             'y_true_V': y_true_V,
+    #             'status': 'optimal'
+    #         }
+            
+    #     elif PREDICTION_MODE == 'multi':
+    #         mu_pred_L = (1 + conformal_predictor.train_pred_raw).prod(dim=1).sub(1).detach().cpu().numpy()  # (d, H)
+    #         mu_pred_V = (1 + conformal_predictor.test_pred_raw).prod(dim=1).sub(1).detach().cpu().numpy()   # (N, d)
+    #         cov_matrix = conformal_predictor.global_cov          
+
+    #         y_pred_V = conformal_predictor.test_pred_raw.mean(dim=0).squeeze().detach().cpu().numpy()
+    #         y_true_V = (1 + conformal_predictor.Y_test).prod(dim=1).sub(1).detach().cpu().numpy()     # Y_test
+            
+    #         return {
+    #             'mu_pred_K': mu_pred_L,
+    #             'mu_pred_V': mu_pred_V,
+    #             'cov_matrix': cov_matrix,
+    #             'radius': radius_seq,
+    #             'coverage': mean_coverage,
+    #             'volume': mean_volume,
+    #             'y_pred_V': y_pred_V,
+    #             'y_true_V': y_true_V,
+    #             'status': 'optimal'
+    #         }
+    #     else:
+    #         raise ValueError(f"Unknown PREDICTION_MODE: {PREDICTION_MODE}")
     
     def optimize_portfolio_socp(self,
                                mu_hat: np.ndarray,

@@ -141,7 +141,6 @@ def train_models(
     lr: float = 1e-3,
     path: str = './weights/',
     loss_aggregation: str = 'mean',        # 'mean' or 'last'
-    cp_residual_mode: str = 'aggregated',  # 일단 시그니처에만 — 필요하면 나중에 사용
 ):
     os.makedirs(path, exist_ok=True)
 
@@ -229,13 +228,12 @@ def train_models(
                 optimizer.zero_grad()
                 preds = model_b(X_batch)
 
-                # 🔹 multi-step일 때 loss_aggregation 반영
+                # in multi step
                 if preds.ndim == 3 and y_batch.ndim == 3:
                     # [B, horizon, d]
                     if loss_aggregation == 'last':
                         loss = criterion(preds[:, -1, :], y_batch[:, -1, :])
                     elif loss_aggregation == 'mean':
-                        # MSELoss 자체가 전체 차원 평균이라 이대로 써도 됨
                         loss = criterion(preds, y_batch)
                     else:
                         raise ValueError(f"Unsupported loss_aggregation: {loss_aggregation}")
@@ -275,7 +273,7 @@ def compute_residuals(model_type, valid_loader, test_loader, models, loader, dev
 
     def gather_targets(loader):
         ys = []
-        for _, y, _, _ in loader: # Unpacking 오류 수정
+        for _, y, _, _ in loader:
             ys.append(y)
         return torch.cat(ys, dim=0)
 
@@ -289,18 +287,17 @@ def compute_residuals(model_type, valid_loader, test_loader, models, loader, dev
             print("Warning: 'inverse_transform' method not found in loader. Returning scaled data.")
             return tensor_data
 
-    # LOO 방식: valid_loader가 None이면 valid 부분 스킵
     if valid_loader is not None:
         Yv = gather_targets(valid_loader)  # [N_valid, L, d] (CPU)
-    Yt = gather_targets(test_loader)   # [N_test,  L, d]
+    Yt = gather_targets(test_loader)   # [N_test, L, d]
 
     Pv_list, Pt_list = [], []
+    
     with torch.no_grad():
         for m in models:
             m.eval()
             m.to(device)
 
-            # Validation set 예측 (valid_loader가 있을 때만)
             if valid_loader is not None:
                 outs_v = []
                 for Xb, yb, _, _ in valid_loader:
@@ -315,12 +312,11 @@ def compute_residuals(model_type, valid_loader, test_loader, models, loader, dev
                 outs_t.append(m(Xb).detach().cpu())
             Pt_list.append(torch.cat(outs_t, dim=0))
 
-    Pt = torch.stack(Pt_list).mean(dim=0)  # [N_test,  L, d]
+    Pt = torch.stack(Pt_list).mean(dim=0)  # [N_test, L, d]
     Yt_inv = inverse(Yt, loader)
     Pt_inv = inverse(Pt, loader)
     Rt = Yt_inv - Pt_inv
 
-    # Valid 결과 처리: valid_loader가 있으면 계산, 없으면 None
     if valid_loader is not None:
         Pv = torch.stack(Pv_list).mean(dim=0)  # [N_valid, L, d]
         Yv_inv = inverse(Yv, loader)
@@ -335,7 +331,6 @@ def compute_residuals(model_type, valid_loader, test_loader, models, loader, dev
             },
         }
     else:
-        # LOO 방식: valid 없음
         return {
             "valid": {"y_true": None, "y_pred": None, "resid": None},
             "test":  {"y_true": Yt_inv, "y_pred": Pt_inv, "resid": Rt},
