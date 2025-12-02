@@ -2,11 +2,9 @@ import torch
 from layers.predictors import LSTMModel, DLinear, MLP
 
 # ==========================================
-# SPLIT MODE SETTING
+# PREDICTION MODE SETTING
 # ==========================================
-# "3_split": Original (Train / Valid(K) / Test(V))
-# "2_split": New (Train(K) / Test(V)) -> Train data is also used for Calibration(K)
-PREDICTION_TYPE = "multi"  # ["single", "multi"]
+PREDICTION_MODE = "multi"  # ["single", "multi"]
 
 # ----  EVALUATION MODE ----
 EVALUATION_MODE = "rolling"  # ["direct", "rolling"]
@@ -18,7 +16,6 @@ MODE = "counts"              # ["dates", "counts"]
 DATA_PATH = "./data"
 FREQUENCY = "weekly"
 LOOKBACK = 52
-HORIZON = 5     # Used only for Multi-Step Prediction (The number of steps to predict)
 NUM_ASSETS = 5     # [5, 10, 30, 49]
 ALPHA = 0.05
 SEED = 2025
@@ -26,9 +23,8 @@ BATCH_SIZE = 32
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 # ==========================================
-# 1. 3-Split Mode Configuration (Direct)
+# 1. Mode Configuration (Direct)
 # ==========================================
-# Used when SPLIT_MODE = "3_split"
 
 # ---- 'dates' Mode ----
 TRAIN_END_DATES = "2015-12-31" # Model Train End
@@ -40,10 +36,6 @@ TRAIN_LENGTH = 52 * 10 # The number of Model Train Sequences
 LEN_K = 52 * 10        # The number of Model Valid(K) Sequences
 LEN_V = 52 * 10        # The number of Model Test(V) Sequences
 
-# ==========================================
-# 2. 2-Split Mode Configuration (Direct)
-# ==========================================
-# Used when SPLIT_MODE = "2_split"
 
 # ---- 'counts' Mode (2-Split) ----
 # Train data serves as Calibration(K) data
@@ -123,6 +115,7 @@ class CCPO:
     QRF_MAX_DEPTH = 5
     CRITERION = "squared_error"
     LOSS_AGG = "mean"    # ["mean", "last"]
+    HORIZON = 5     # Used only for Multi-Step Prediction (The number of steps to predict)
 
 
 # ---- Utility Function ----

@@ -20,7 +20,7 @@ if __name__ == "__main__":
     set_seed(config.SEED)
 
     # 2. Retrieve and Validate Configuration
-    prediction_mode = getattr(config, "PREDICTION_TYPE", "single").lower()
+    prediction_mode = getattr(config, "PREDICTION_MODE", "single").lower()
     data_mode = config.MODE.lower()
     eval_mode = config.EVALUATION_MODE.lower()
 
@@ -41,7 +41,7 @@ if __name__ == "__main__":
     print(f"{'='*60}")
     print(f" 🔹 Evaluation Type : {eval_mode.upper()}") # Direct or Rolling
     print(f" 🔹 Data Mode       : {data_mode.upper()}")  # Counts or Dates
-    print(f" 🔹 Split Mode      : {prediction_mode.upper()}") # 2_SPLIT or 3_SPLIT
+    print(f" 🔹 Prediction Mode      : {prediction_mode.upper()}") # 2_SPLIT or 3_SPLIT
     print(f" 🔹 Asset Count     : {config.NUM_ASSETS}")
     print(f" 🔹 Device          : {config.DEVICE}")
     print(f"{'='*60}\n")

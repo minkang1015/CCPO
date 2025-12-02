@@ -304,9 +304,9 @@ def run_ccpo_rolling_counts(
             res = loader.create_all(
                 mode="counts",
                 lookback=lookback,
-                train_len=model_train_len,
-                K=K_len,
+                K=model_train_len,   # 전체 Train(K) 시퀀스 개수
                 V=V_len,
+                horizon=cfg.CCPO.HORIZON,
                 start_idx=start_idx,
                 batch_size=cfg.CCPO.BATCH_SIZE,
                 shuffle_train=True,
@@ -462,10 +462,10 @@ def run_ccpo_rolling_dates(
             res = loader.create_all(
                 mode="dates",
                 lookback=lookback,
+                k_end_date=train_end_date.strftime('%Y-%m-%d'), 
+                v_end_date=V_dates.max().strftime('%Y-%m-%d'), # Infer V end from provided V_dates
+                horizon=cfg.CCPO.HORIZON,
                 train_start_date=train_start_date.strftime('%Y-%m-%d'),
-                train_end_date=train_end_date.strftime('%Y-%m-%d'),
-                val_end_date=K_end_date.strftime('%Y-%m-%d'),
-                test_end_date=None, 
                 batch_size=cfg.CCPO.BATCH_SIZE,
                 shuffle_train=True,
                 use_scaler=True,
