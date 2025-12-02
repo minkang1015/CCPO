@@ -16,8 +16,8 @@ MODE = "counts"              # ["dates", "counts"]
 DATA_PATH = "./data"
 FREQUENCY = "weekly"
 LOOKBACK = 52
-NUM_ASSETS = 5     # [5, 10, 30, 49]
-ALPHA = 0.05
+NUM_ASSETS = 5
+ALPHA = 0.01
 SEED = 2025
 BATCH_SIZE = 32 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -39,8 +39,8 @@ LEN_V = 52 * 10        # The number of Model Test(V) Sequences
 
 # ---- 'counts' Mode (2-Split) ----
 # Train data serves as Calibration(K) data
-TRAIN_K_LEN = 1300  # Length for Train(K)
-TEST_V_LEN = 260    # Length for Test(V)
+TRAIN_K_LEN = 780
+TEST_V_LEN = 52
 
 # ---- 'dates' Mode (2-Split) ----
 K_END_DATE = "2020-12-31" # End of Train(K)
@@ -59,9 +59,9 @@ class ROLLING:
     # Used when PRDICTION_MODE = "single"
     class SINGLE:
         class COUNTS:
-            TRAIN_K_LEN = 52 * 10           # Merged Train(K) Length
-            V_LEN = int(52 * 2)             # V(Test) Length
-            STEP_SIZE = int(52 * 2)         # Step size
+            TRAIN_K_LEN = 780
+            V_LEN = 780
+            STEP_SIZE = 780
 
         class DATES:
             K_PERIOD_OFFSET = "15Y"         # Merged Train(K) Offset
@@ -76,9 +76,9 @@ class ROLLING:
     # Used when PRDICTION_MODE = "multi"
     class MULTI:
         class COUNTS:
-            TRAIN_K_LEN = 52 * 10           # Merged Train(K) Length
-            V_LEN = int(52 * 2)             # V(Test) Length
-            STEP_SIZE = int(52 * 2)         # Step size
+            TRAIN_K_LEN = 780
+            V_LEN = 52
+            STEP_SIZE = 52
 
         class DATES:
             K_PERIOD_OFFSET = "15Y"         # Merged Train(K) Offset
@@ -99,11 +99,11 @@ class CPP:
 # ---- CCPO Configuration ----
 class CCPO:
     MODEL_CLASS = LSTMModel
-    LOW_RANK_R = 4      
+    LOW_RANK_R = int(0.8 * NUM_ASSETS)      
     USE_LOCAL_ELLIPSOID = False     
-    B = 2       
+    B = 5
     BATCH_SIZE = 32    
-    EPOCHS = 10     
+    EPOCHS = 50     
     LEARNING_RATE = 1e-4        
     WEIGHTS_PATH = "./weights/ccpo"     
     USE_SPCI = True     

@@ -45,7 +45,7 @@ def run_rolling_evaluation(
     result_folder = os.path.join(
         os.path.dirname(__file__),
         "..", "results",
-        f"run_rolling_{cfg.ROLLING.WINDOW_TYPE}_{cfg.MODE}_{prediction_mode}_{alpha}_{cfg.NUM_ASSETS}_assets_{cfg.SEED}_{k_info}K_{v_info}V_{timestamp}"
+        f"run_rolling_{cfg.ROLLING.WINDOW_TYPE}_{cfg.MODE}_{prediction_mode}_{alpha}_{cfg.NUM_ASSETS}_assets_{cfg.SEED}_{k_info}K_{v_info}V_{cfg.CCPO.B}_{timestamp}"
     )
     os.makedirs(result_folder, exist_ok=True)
 
@@ -76,6 +76,10 @@ def run_rolling_evaluation(
         baseline_methods = ["Equal-Weight"]
         all_methods = cpp_methods + ccpo_methods + baseline_methods
         portfolios = {m: Portfolio(name=m) for m in all_methods}
+        ccpo_agg_stats = {'coverage_seq': [],
+                          'radius_seq': [],
+                          'volume_seq': []
+                          }
 
         window_definitions = []
 
@@ -313,6 +317,14 @@ def run_rolling_evaluation(
                 )
             window_results["CCPO-CCO"] = ccpo_res
 
+            if ccpo_res.get("status") == "optimal":
+                if "coverage_seq" in ccpo_res:
+                    ccpo_agg_stats["coverage_seq"].extend(ccpo_res["coverage_seq"])
+                if "radius_seq" in ccpo_res:
+                    ccpo_agg_stats["radius_seq"].extend(ccpo_res["radius_seq"])
+                if "volume_seq" in ccpo_res:
+                    ccpo_agg_stats["volume_seq"].extend(ccpo_res["volume_seq"])
+
             # 4) Equal-Weight
             if n_assets > 0:
                 equal_w = np.ones(n_assets) / n_assets
@@ -353,10 +365,21 @@ def run_rolling_evaluation(
                              )
 
         # Final Save
+        final_results = {}
+        if ccpo_agg_stats["coverage_seq"]:
+            final_results["CCPO-CCO"] = {
+                "status": "optimal",
+                "coverage_seq": ccpo_agg_stats["coverage_seq"],
+                "radius_seq": ccpo_agg_stats["radius_seq"],
+                'volume_seq': ccpo_agg_stats["volume_seq"],
+                "coverage": np.mean(ccpo_agg_stats["coverage_seq"]),
+                "volume": np.mean(ccpo_agg_stats["volume_seq"]) if any(ccpo_agg_stats["volume_seq"]) else 0.0
+            }
+        
         aggregate_and_save_results(
             portfolios=portfolios, result_folder=result_folder,
             asset_names=asset_names, prefix="rolling_agg",
-            cfg=cfg, results=None
+            cfg=cfg, results=final_results
         )
         print(f"📝 Log saved to: {log_file}")
         return { "portfolios": portfolios, "result_folder": result_folder }

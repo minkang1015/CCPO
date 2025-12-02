@@ -366,7 +366,7 @@ def run_ccpo_rolling_counts(
         )
         calibration_time = time.time() - start_time_calib
 
-        mean_coverage_calib, _, _, _, radius_seq = conformal_predictor.get_results()
+        mean_coverage_calib, _, coverage_seq, volume_seq, radius_seq = conformal_predictor.get_results()
         if not radius_seq: raise ValueError("Calibration failed: Radius sequence is empty.")
         
         radius = float(np.mean(radius_seq))
@@ -416,6 +416,9 @@ def run_ccpo_rolling_counts(
             'status': 'optimal',
             'calibration_time': calibration_time,
             'optimization_time': optimization_time,
+            'coverage_seq': coverage_seq,
+            'radius_seq': radius_seq,
+            'volume_seq': volume_seq
         }
 
     except Exception as e:
@@ -530,7 +533,7 @@ def run_ccpo_rolling_dates(
         )
         calibration_time = time.time() - start_time_calib
 
-        mean_coverage_calib, _, _, _, radius_seq = conformal_predictor.get_results()
+        mean_coverage_calib, _, coverage_seq, volume_seq, radius_seq = conformal_predictor.get_results()
         if not radius_seq: raise ValueError("Calibration failed: Radius sequence is empty.")
         
         radius = float(np.mean(radius_seq))
@@ -580,6 +583,9 @@ def run_ccpo_rolling_dates(
             'status': 'optimal',
             'calibration_time': calibration_time,
             'optimization_time': optimization_time,
+            'coverage_seq': coverage_seq,
+            'radius_seq': radius_seq,
+            'volume_seq': volume_seq
         }
 
     except Exception as e:
