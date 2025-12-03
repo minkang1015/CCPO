@@ -39,8 +39,8 @@ LEN_V = 52 * 10        # The number of Model Test(V) Sequences
 
 # ---- 'counts' Mode (2-Split) ----
 # Train data serves as Calibration(K) data
-TRAIN_K_LEN = 780
-TEST_V_LEN = 52
+TRAIN_K_LEN = 520
+TEST_V_LEN = 156
 
 # ---- 'dates' Mode (2-Split) ----
 K_END_DATE = "2020-12-31" # End of Train(K)
@@ -59,9 +59,9 @@ class ROLLING:
     # Used when PRDICTION_MODE = "single"
     class SINGLE:
         class COUNTS:
-            TRAIN_K_LEN = 780
-            V_LEN = 780
-            STEP_SIZE = 780
+            TRAIN_K_LEN = 520
+            V_LEN = 156
+            STEP_SIZE = 156
 
         class DATES:
             K_PERIOD_OFFSET = "15Y"         # Merged Train(K) Offset
@@ -76,9 +76,9 @@ class ROLLING:
     # Used when PRDICTION_MODE = "multi"
     class MULTI:
         class COUNTS:
-            TRAIN_K_LEN = 780
-            V_LEN = 52
-            STEP_SIZE = 52
+            TRAIN_K_LEN = 520
+            V_LEN = 156
+            STEP_SIZE = 156
 
         class DATES:
             K_PERIOD_OFFSET = "15Y"         # Merged Train(K) Offset

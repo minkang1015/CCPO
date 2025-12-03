@@ -14,14 +14,14 @@ restore_config() {
 trap restore_config EXIT
 
 
-ALPHAS=(0.01 0.05 0.1)                 # alpha
-SEEDS=(2025 2026)                   # seed
-WINDOW_TYPES=("sliding" "expanding") # Window Type
+ALPHAS=(0.05)                 # alpha
+SEEDS=(2025)                   # seed
+WINDOW_TYPES=("sliding") # Window Type
 ASSETS=(5 10 30 49)                     # NUM_ASSETS
 
-K_LENS=(780 520 260) # 15Y, 10Y, 5Y
-V_LENS=(156 104 52)  # 3Y, 2Y, 1Y
-BOOTSTRAPS=(5 10 20 30) # the number of bootstrap models
+K_LENS=(520) # 15Y, 10Y, 5Y
+V_LENS=(104)  # 3Y, 2Y, 1Y
+BOOTSTRAPS=(20 30) # the number of bootstrap models
 
 
 echo "🚀 Run CCPO-CCO..."
