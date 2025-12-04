@@ -16,12 +16,12 @@ trap restore_config EXIT
 
 ALPHAS=(0.05)                 # alpha
 SEEDS=(2025)                   # seed
-WINDOW_TYPES=("sliding") # Window Type
+WINDOW_TYPES=("expanding") # Window Type
 ASSETS=(5 10 30 49)                     # NUM_ASSETS
 
 K_LENS=(520) # 15Y, 10Y, 5Y
 V_LENS=(104)  # 3Y, 2Y, 1Y
-BOOTSTRAPS=(20 30) # the number of bootstrap models
+BOOTSTRAPS=(20) # the number of bootstrap models
 
 
 echo "🚀 Run CCPO-CCO..."
@@ -30,10 +30,10 @@ echo "📂 : $CONFIG_FILE"
 for alpha in "${ALPHAS[@]}"; do
   for seed in "${SEEDS[@]}"; do
     for window in "${WINDOW_TYPES[@]}"; do
-      for asset in "${ASSETS[@]}"; do
+      for v_len in "${V_LENS[@]}"; do
         for b_val in "${BOOTSTRAPS[@]}"; do
           for k_len in "${K_LENS[@]}"; do
-            for v_len in "${V_LENS[@]}"; do
+            for asset in "${ASSETS[@]}"; do
               
               echo "------------------------------------------------------------------------------------------------"
               echo "▶ Run: Alpha=$alpha | Seed=$seed | Win=$window | Asset=$asset | B=$b_val | K=$k_len | V=$v_len"

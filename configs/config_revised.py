@@ -16,8 +16,8 @@ MODE = "counts"              # ["dates", "counts"]
 DATA_PATH = "./data"
 FREQUENCY = "weekly"
 LOOKBACK = 52
-NUM_ASSETS = 5
-ALPHA = 0.01
+NUM_ASSETS = 30
+ALPHA = 0.05
 SEED = 2025
 BATCH_SIZE = 32 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -40,7 +40,7 @@ LEN_V = 52 * 10        # The number of Model Test(V) Sequences
 # ---- 'counts' Mode (2-Split) ----
 # Train data serves as Calibration(K) data
 TRAIN_K_LEN = 520
-TEST_V_LEN = 156
+TEST_V_LEN = 104
 
 # ---- 'dates' Mode (2-Split) ----
 K_END_DATE = "2020-12-31" # End of Train(K)
@@ -51,7 +51,7 @@ V_END_DATE = "2023-12-31" # End of Test(V)
 # ROLLING Configuration
 # ==========================================
 class ROLLING:
-    WINDOW_TYPE = "sliding"   # ["sliding", "expanding"]
+    WINDOW_TYPE = "expanding"   # ["sliding", "expanding"]
 
     # ----------------------------------------
     # [Option A] Signle Step Rolling Settings
@@ -60,8 +60,8 @@ class ROLLING:
     class SINGLE:
         class COUNTS:
             TRAIN_K_LEN = 520
-            V_LEN = 156
-            STEP_SIZE = 156
+            V_LEN = 104
+            STEP_SIZE = 104
 
         class DATES:
             K_PERIOD_OFFSET = "15Y"         # Merged Train(K) Offset
@@ -77,8 +77,8 @@ class ROLLING:
     class MULTI:
         class COUNTS:
             TRAIN_K_LEN = 520
-            V_LEN = 156
-            STEP_SIZE = 156
+            V_LEN = 104
+            STEP_SIZE = 104
 
         class DATES:
             K_PERIOD_OFFSET = "15Y"         # Merged Train(K) Offset
@@ -101,7 +101,7 @@ class CCPO:
     MODEL_CLASS = LSTMModel
     LOW_RANK_R = int(0.8 * NUM_ASSETS)      
     USE_LOCAL_ELLIPSOID = False     
-    B = 5
+    B = 20
     BATCH_SIZE = 32    
     EPOCHS = 50     
     LEARNING_RATE = 1e-4        

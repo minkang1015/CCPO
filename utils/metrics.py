@@ -190,6 +190,22 @@ def calculate_portfolio_metrics(portfolio,
         metrics['avg_threshold'] = np.mean(thresholds)
         metrics['min_threshold'] = np.min(thresholds)
         metrics['max_threshold'] = np.max(thresholds)
+        
+        # Calculate Coverage Rate
+        min_len = min(len(returns), len(thresholds))
+        curr_returns = returns[:min_len]
+        curr_thresholds = thresholds[:min_len]
+        
+        satisfied_count = np.sum(curr_returns >= curr_thresholds)
+        coverage_rate = satisfied_count / min_len if min_len > 0 else 0.0
+        
+        metrics['coverage_rate'] = coverage_rate
+    
+    else:
+        metrics['avg_threshold'] = None
+        metrics['min_threshold'] = None
+        metrics['max_threshold'] = None
+        metrics['coverage_rate'] = None
     
     return metrics
 
@@ -225,7 +241,7 @@ def compare_methods(portfolios: Dict[str, Any],
     
     # Add CPP-specific columns if they exist
     if 'avg_threshold' in df.columns:
-        column_order.extend(['avg_threshold', 'min_threshold', 'max_threshold'])
+        column_order.extend(['avg_threshold', 'min_threshold', 'max_threshold', 'coverage_rate'])
     
     # Only keep columns that exist
     column_order = [col for col in column_order if col in df.columns]
@@ -262,10 +278,12 @@ def print_portfolio_metrics(metrics: Dict, portfolio_name: str = "Portfolio"):
     print(f"  Total Solve Time:     {metrics['total_solve_time']:>10.2f}s")
     
     # CPP-specific metrics
-    if 'avg_threshold' in metrics:
+    if 'avg_threshold' in metrics and metrics['avg_threshold'] is not None:
         print(f"\n🎯 CPP Threshold Metrics:")
         print(f"  Avg Threshold:        {metrics['avg_threshold']:>10.6f}")
         print(f"  Min Threshold:        {metrics['min_threshold']:>10.6f}")
         print(f"  Max Threshold:        {metrics['max_threshold']:>10.6f}")
-    
+
+        if'coverage_rate' in metrics and metrics['coverage_rate'] is not None:
+            print(f"  Coverage Rate:        {metrics['coverage_rate']:>10.6%}")
     print(f"{'='*60}\n")

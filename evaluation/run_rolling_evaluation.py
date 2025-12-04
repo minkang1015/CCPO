@@ -103,9 +103,20 @@ def run_rolling_evaluation(
                 
                 # Raw index logic
                 current_idx = 0
+                fixed_start_idx = 0
+                
                 while True:
                     k_end_idx = current_idx + k_len + lookback 
                     v_end_idx = k_end_idx + v_len
+                    
+                    if cfg.ROLLING.WINDOW_TYPE == "expanding":
+                        k_start = fixed_start_idx
+                        k_end = k_end_idx
+                        actual_train_len = k_end - k_start - lookback
+                    else:  # sliding
+                        k_start = current_idx
+                        k_end = k_end_idx
+                        actual_train_len = k_len
                     
                     if v_end_idx > total_len:
                         break
@@ -113,11 +124,11 @@ def run_rolling_evaluation(
                     window_definitions.append({
                         "mode": "counts",
                         "prediction": "single",
-                        "k_start_raw_idx": current_idx, 
+                        "k_start_raw_idx": k_start, 
                         "k_end_raw_idx": k_end_idx,     
                         "v_start_raw_idx": k_end_idx,
                         "v_end_raw_idx": v_end_idx,
-                        "train_len": k_len, 
+                        "train_len": actual_train_len, 
                         "K_len": 0,         
                         "V_len": v_len
                     })
@@ -138,21 +149,26 @@ def run_rolling_evaluation(
                  max_date = full_data_resampled.index[-1]
                  
                  current_start = start_date
+                 fixed_start_date = start_date
+                 
                  while True:
                      k_end_date = current_start + k_offset
                      v_end_date = k_end_date + v_offset
                      
                      if v_end_date > max_date:
                          break
-                         
+                     if cfg.ROLLING.WINDOW_TYPE == "expanding":
+                            actual_start_date = fixed_start_date
+                            actual_start_date = current_start
+                    
                      window_definitions.append({
                         "mode": "dates",
                         "prediction": "single",
-                        "k_start_date": current_start,
+                        "k_start_date": actual_start_date,
                         "k_end_date": k_end_date,
                         "v_start_date": k_end_date,
                         "v_end_date": v_end_date,
-                        "train_start_date": current_start,
+                        "train_start_date": actual_start_date,
                         "train_end_date": k_end_date 
                      })
                      current_start += step_offset
@@ -190,7 +206,7 @@ def run_rolling_evaluation(
                     else: # sliding
                         current_train_len = initial_train_len           
                         train_end_idx = current_k_start_idx
-                        train_start_idx = train_end_idx - (lookback + current_train_len)
+                        train_start_idx = train_end_idx - lookback + current_train_len
 
                     window_definitions.append({
                         "mode": "counts",
