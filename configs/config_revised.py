@@ -101,9 +101,9 @@ class CCPO:
     MODEL_CLASS = LSTMModel
     LOW_RANK_R = int(0.8 * NUM_ASSETS)      
     USE_LOCAL_ELLIPSOID = False     
-    B = 2
+    B = 20
     BATCH_SIZE = 32    
-    EPOCHS = 1     
+    EPOCHS = 200     
     LEARNING_RATE = 1e-3       
     WEIGHTS_PATH = "./weights/ccpo"     
     USE_SPCI = True     

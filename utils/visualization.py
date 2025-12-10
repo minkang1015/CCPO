@@ -7,7 +7,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from typing import Dict, List, Optional
 import os
-
+from utils.metrics import calculate_net_returns
 
 def plot_cumulative_returns(
     portfolios: Dict[str, any],
@@ -32,8 +32,11 @@ def plot_cumulative_returns(
             continue
         
         # Get returns and dates
+        weights = portfolio.get_weights_array()
         returns = portfolio.get_returns_array()
+        
         dates = portfolio.dates
+        returns = calculate_net_returns(returns, weights)
         
         # Calculate cumulative returns
         cumulative_returns = (1 + returns).cumprod()

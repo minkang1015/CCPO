@@ -84,7 +84,7 @@ def run_rolling_evaluation(
         window_definitions = []
 
         # ==============================================================================
-        # WINDOW GENERATION LOGIC
+        # WINDOW GENERATION LOGIC (수정됨)
         # ==============================================================================
         
         # ---------------------
@@ -118,8 +118,14 @@ def run_rolling_evaluation(
                         k_end = k_end_idx
                         actual_train_len = k_len
                     
-                    if v_end_idx > total_len:
+                    # [수정됨] K(Train) 구간조차 부족하면 중단
+                    if k_end_idx > total_len:
                         break
+                    
+                    # [수정됨] V 구간이 부족해도 마지막 윈도우로 추가 후 루프 종료
+                    should_break_after = False
+                    if v_end_idx > total_len:
+                        should_break_after = True
                         
                     window_definitions.append({
                         "mode": "counts",
@@ -132,6 +138,10 @@ def run_rolling_evaluation(
                         "K_len": 0,         
                         "V_len": v_len
                     })
+
+                    if should_break_after:
+                        break
+
                     current_idx += step_size
                     
             elif cfg.MODE == "dates":
@@ -155,11 +165,18 @@ def run_rolling_evaluation(
                      k_end_date = current_start + k_offset
                      v_end_date = k_end_date + v_offset
                      
-                     if v_end_date > max_date:
+                     if k_end_date > max_date:
                          break
+
+                     should_break_after = False
+                     if v_end_date > max_date + pd.Timedelta(days=1):
+                         should_break_after = True
+                     
                      if cfg.ROLLING.WINDOW_TYPE == "expanding":
                             actual_start_date = fixed_start_date
-                            actual_start_date = current_start
+                            # actual_start_date = current_start # Bug fix in prompt logic?
+                     else:
+                            actual_start_date = current_start # sliding
                     
                      window_definitions.append({
                         "mode": "dates",
@@ -171,6 +188,10 @@ def run_rolling_evaluation(
                         "train_start_date": actual_start_date,
                         "train_end_date": k_end_date 
                      })
+                     
+                     if should_break_after:
+                         break
+                         
                      current_start += step_offset
 
         # ---------------------
@@ -196,8 +217,14 @@ def run_rolling_evaluation(
                     k_end_idx = current_k_start_idx + k_raw_len
                     v_end_idx = k_end_idx + v_raw_len
                     
-                    if v_end_idx > total_len:
+                    # [수정됨] K 구간이 부족하면 중단
+                    if k_end_idx > total_len:
                         break
+
+                    # [수정됨] V 구간이 부족해도 추가하고 중단
+                    should_break_after = False
+                    if v_end_idx > total_len:
+                        should_break_after = True
                     
                     if cfg.ROLLING.WINDOW_TYPE == "expanding":
                         train_start_idx = fixed_train_start_idx
@@ -220,6 +247,10 @@ def run_rolling_evaluation(
                         "v_start_raw_idx": k_end_idx,
                         "v_end_raw_idx": v_end_idx,
                     })
+
+                    if should_break_after:
+                        break
+
                     current_k_start_idx += step_size
 
             elif cfg.MODE == "dates":
@@ -237,10 +268,15 @@ def run_rolling_evaluation(
                 current_v_start_date = first_v_start
                 while True:
                     v_end_date = current_v_start_date + v_offset
-                    if v_end_date > full_data_resampled.index[-1] + pd.Timedelta(days=1):
-                        break
-
                     k_end_date = current_v_start_date
+
+                    if k_end_date > full_data_resampled.index[-1]:
+                        break
+                    
+                    should_break_after = False
+                    if v_end_date > full_data_resampled.index[-1] + pd.Timedelta(days=1):
+                         should_break_after = True
+
                     train_end_date = k_end_date - k_offset
 
                     if cfg.ROLLING.WINDOW_TYPE == "expanding":
@@ -258,6 +294,10 @@ def run_rolling_evaluation(
                         "v_start_date": k_end_date,
                         "v_end_date": v_end_date
                     })
+
+                    if should_break_after:
+                        break
+
                     current_v_start_date += step_offset
 
         print(f"\nTotal valid windows defined: {len(window_definitions)}")

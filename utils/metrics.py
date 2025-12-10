@@ -186,10 +186,10 @@ def calculate_portfolio_metrics(portfolio,
     metrics['sortino_ratio'] = calculate_sortino_ratio(returns, risk_free_rate, periods_per_year)
     metrics['calmar_ratio'] = calculate_calmar_ratio(returns, periods_per_year)
     metrics['turnover'] = np.mean(calculate_turnover(weights))
-    metrics['VaR'], metrics['CVaR'] = calculate_var_cvar(returns, confidence_level=ALPHA)
+    metrics['VaR'], metrics['CVaR'] = calculate_var_cvar(returns, confidence_level=(1-ALPHA))
     
     # Computational metrics
-    solve_times = [t for t in portfolio.solve_times if t > 0]  # Only non-zero solve times
+    solve_times = [t for t in portfolio.solve_times if t > 0] 
     metrics['avg_solve_time'] = np.mean(solve_times) if solve_times else 0.0
     metrics['total_solve_time'] = np.sum(solve_times)
     
