@@ -473,6 +473,84 @@ class SimpleTimeSeriesDataLoader(TimeSeriesDataLoader):
     - No separate Validation split.
     """
 
+    # def create_2split_by_counts(
+    #     self,
+    #     lookback: int,
+    #     k_len: int,  # Length for Train(K)
+    #     v_len: int,  # Length for Test(V)
+    #     start_idx: int = 0,
+    #     batch_size: int = 32,
+    #     shuffle_train: bool = True,
+    #     use_scaler: bool = True,
+    # ) -> Dict[str, object]:
+        
+    #     # 1. Prepare Data
+    #     if self.raw_data is None: self.load_data()
+    #     data_to_use = self.data if self.data is not None else self.raw_data
+
+    #     total_len = k_len + v_len
+    #     total_raw_needed = lookback + total_len
+    #     end_idx = start_idx + total_raw_needed
+
+    #     # Check data availability
+    #     if end_idx > len(data_to_use):
+    #         raise ValueError(f"Not enough data. Needed {total_raw_needed}, available {len(data_to_use)-start_idx}")
+
+    #     # 2. Slicing Window
+    #     window_df = data_to_use.iloc[start_idx:end_idx]
+        
+    #     # 3. Fit Scaler (Fit ONLY on Train(K) part)
+    #     if use_scaler:
+    #         fit_df = window_df.iloc[: (lookback + k_len)]
+    #         self.fit_scaler(fit_df)
+
+    #     scaled_df = self.transform(window_df)
+    #     X_all, y_all, dates_all = self.create_sequences(scaled_df, lookback=lookback)
+        
+    #     # Raw Data (for Optimization / Calibration)
+    #     _, y_raw, dates_raw = self.create_sequences(window_df, lookback=lookback)
+        
+    #     dates_all = pd.to_datetime(dates_all)
+    #     dates_raw = pd.to_datetime(dates_raw)
+
+    #     # 5. Split into Train(K) and Test(V)
+    #     k_slice = slice(0, k_len)
+    #     v_slice = slice(k_len, total_len)
+
+    #     # Model Data
+    #     X_k, y_k = X_all[k_slice], y_all[k_slice]
+    #     X_v, y_v = X_all[v_slice], y_all[v_slice]
+    #     d_k = dates_all[k_slice]
+    #     d_v = dates_all[v_slice]
+
+    #     # Optimization Data (Raw)
+    #     y_opt_k = y_raw[k_slice]
+    #     y_opt_v = y_raw[v_slice]
+    #     d_opt_k = dates_raw[k_slice]
+    #     d_opt_v = dates_raw[v_slice]
+
+    #     # 6. Create Loaders
+    #     train_loader = DataLoader(TimeSeriesDataset(X_k, y_k, unsqueeze_y=True), batch_size=batch_size, shuffle=shuffle_train)
+    #     test_loader  = DataLoader(TimeSeriesDataset(X_v, y_v, unsqueeze_y=True), batch_size=batch_size, shuffle=False)
+        
+    #     print(f"\n[2-Split Mode] Counts Split Result:")
+    #     print(f"Train(K): {len(X_k)} sequences ({d_k[0].date()} ~ {d_k[-1].date()})")
+    #     print(f"Test(V) : {len(X_v)} sequences ({d_v[0].date()} ~ {d_v[-1].date()})")
+
+    #     return {
+    #         "model": {
+    #             "train_loader": train_loader,
+    #             "valid_loader": None,  # No separate validation set
+    #             "test_loader":  test_loader,
+    #             "dates": {"train": d_k, "valid": None, "test": d_v},
+    #         },
+    #         "opt": {
+    #             "y_K": y_opt_k, "dates_K": d_opt_k,
+    #             "y_V": y_opt_v, "dates_V": d_opt_v,
+    #         },
+    #         "scaler": self.scaler,
+    #     }
+    
     def create_2split_by_counts(
         self,
         lookback: int,
@@ -488,18 +566,28 @@ class SimpleTimeSeriesDataLoader(TimeSeriesDataLoader):
         if self.raw_data is None: self.load_data()
         data_to_use = self.data if self.data is not None else self.raw_data
 
-        total_len = k_len + v_len
-        total_raw_needed = lookback + total_len
-        end_idx = start_idx + total_raw_needed
 
-        # Check data availability
-        if end_idx > len(data_to_use):
-            raise ValueError(f"Not enough data. Needed {total_raw_needed}, available {len(data_to_use)-start_idx}")
+        available_len = len(data_to_use) - start_idx
+        min_needed_for_k = lookback + k_len
+
+        if available_len < min_needed_for_k:
+            raise ValueError(
+                f"Not enough data for Train(K). Needed {min_needed_for_k}, "
+                f"available {available_len} (start_idx={start_idx})"
+            )
+
+        total_raw_needed = lookback + k_len + v_len
+        
+        if available_len < total_raw_needed:
+            adjusted_v_len = available_len - min_needed_for_k
+            v_len = adjusted_v_len
+        
+        total_len = k_len + v_len
+        end_idx = start_idx + lookback + total_len
 
         # 2. Slicing Window
         window_df = data_to_use.iloc[start_idx:end_idx]
         
-        # 3. Fit Scaler (Fit ONLY on Train(K) part)
         if use_scaler:
             fit_df = window_df.iloc[: (lookback + k_len)]
             self.fit_scaler(fit_df)
@@ -523,19 +611,17 @@ class SimpleTimeSeriesDataLoader(TimeSeriesDataLoader):
         d_k = dates_all[k_slice]
         d_v = dates_all[v_slice]
 
-        # Optimization Data (Raw)
         y_opt_k = y_raw[k_slice]
         y_opt_v = y_raw[v_slice]
         d_opt_k = dates_raw[k_slice]
         d_opt_v = dates_raw[v_slice]
 
-        # 6. Create Loaders
         train_loader = DataLoader(TimeSeriesDataset(X_k, y_k, unsqueeze_y=True), batch_size=batch_size, shuffle=shuffle_train)
         test_loader  = DataLoader(TimeSeriesDataset(X_v, y_v, unsqueeze_y=True), batch_size=batch_size, shuffle=False)
         
         print(f"\n[2-Split Mode] Counts Split Result:")
-        print(f"Train(K): {len(X_k)} sequences ({d_k[0].date()} ~ {d_k[-1].date()})")
-        print(f"Test(V) : {len(X_v)} sequences ({d_v[0].date()} ~ {d_v[-1].date()})")
+        print(f"Train(K): {len(X_k)} sequences ({d_k[0].date() if len(d_k)>0 else 'N/A'} ~ {d_k[-1].date() if len(d_k)>0 else 'N/A'})")
+        print(f"Test(V) : {len(X_v)} sequences ({d_v[0].date() if len(d_v)>0 else 'N/A'} ~ {d_v[-1].date() if len(d_v)>0 else 'N/A'})")
 
         return {
             "model": {

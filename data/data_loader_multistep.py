@@ -81,6 +81,113 @@ class DataLoaderMultiStep(TimeSeriesDataLoader):
     # ------------------------------------------------------------------
     # counts mode
     # ------------------------------------------------------------------
+    # def create_all_by_counts(
+    #     self,
+    #     lookback: int,
+    #     k_len: int,             # Length for Train(K)
+    #     v_len: int,             # Length for Test(V)
+    #     horizon: int,
+    #     start_idx: int = 0,
+    #     batch_size: int = 32,
+    #     shuffle_train: bool = True,
+    #     use_scaler: bool = True,
+    # ) -> Dict[str, object]:
+    #     """
+    #     2-split multi-step counts mode: Train(K) / Test(V).
+
+    #     - Input data: ALWAYS daily raw_data (no resampling)
+    #     - Model:
+    #         X_K, y_K: [k_len, lookback, d], [k_len, horizon, d]
+    #         X_V, y_V: [v_len, lookback, d], [v_len, horizon, d]
+    #     - Opt:
+    #         y_K, y_V: raw-scale multi-step targets [k_len, horizon, d], [v_len, horizon, d]
+    #     """
+    #     # 1. Data 준비
+    #     if self.raw_data is None:
+    #         self.load_data()
+    #     data_to_use = self.raw_data  
+
+    #     total_len = k_len + v_len
+    #     total_raw_needed = lookback + total_len + horizon - 1
+    #     end_idx = start_idx + total_raw_needed
+
+    #     if end_idx > len(data_to_use):
+    #         raise ValueError(
+    #             f"[MultiStep] Not enough data. Needed {total_raw_needed}, "
+    #             f"available {len(data_to_use) - start_idx}"
+    #         )
+
+    #     window_df = data_to_use.iloc[start_idx:end_idx]
+
+    #     if use_scaler:
+    #         fit_len = lookback + k_len + horizon - 1
+    #         fit_df = window_df.iloc[:fit_len]
+    #         self.fit_scaler(fit_df)
+
+    #     # 4. Multi-step 시퀀스 생성 (scaled / raw)
+    #     scaled_df = self.transform(window_df)
+    #     X_all, y_all, dates_all = self.create_sequences_multistep(
+    #         scaled_df, lookback=lookback, horizon=horizon
+    #     )
+    #     _, y_raw, dates_raw = self.create_sequences_multistep(
+    #         window_df, lookback=lookback, horizon=horizon
+    #     )
+
+    #     dates_all = pd.to_datetime(dates_all)
+    #     dates_raw = pd.to_datetime(dates_raw)
+
+    #     if len(X_all) != total_len:
+    #         raise ValueError(
+    #             f"[MultiStep] Got {len(X_all)} sequences but expected {total_len} (k_len+v_len)."
+    #         )
+    #     if len(dates_all) != len(dates_raw) or not np.array_equal(dates_all, dates_raw):
+    #         raise AssertionError("[MultiStep] Scaled/Raw sequence dates misaligned in count mode.")
+
+    #     # 5. Train(K) / Test(V) 슬라이스
+    #     k_slice = slice(0, k_len)
+    #     v_slice = slice(k_len, total_len)
+
+    #     X_k, y_k = X_all[k_slice], y_all[k_slice]
+    #     X_v, y_v = X_all[v_slice], y_all[v_slice]
+    #     d_k = dates_all[k_slice]
+    #     d_v = dates_all[v_slice]
+
+    #     y_opt_k = y_raw[k_slice]
+    #     y_opt_v = y_raw[v_slice]
+    #     d_opt_k = dates_raw[k_slice]
+    #     d_opt_v = dates_raw[v_slice]
+
+    #     # 6. DataLoader 생성 (y는 [N, H, d] → unsqueeze_y=False)
+    #     train_loader = DataLoader(
+    #         TimeSeriesDataset(X_k, y_k, unsqueeze_y=False),
+    #         batch_size=batch_size,
+    #         shuffle=shuffle_train,
+    #     )
+    #     test_loader = DataLoader(
+    #         TimeSeriesDataset(X_v, y_v, unsqueeze_y=False),
+    #         batch_size=batch_size,
+    #         shuffle=False,
+    #     )
+
+    #     print(f"\n[MultiStep Count Mode] Result:")
+    #     print(f"Train(K): {len(X_k)} sequences ({d_k[0].date()} ~ {d_k[-1].date()})")
+    #     print(f"Test(V) : {len(X_v)} sequences ({d_v[0].date()} ~ {d_v[-1].date()})")
+
+    #     return {
+    #         "model": {
+    #             "train_loader": train_loader,
+    #             "valid_loader": None,  # No separate validation set
+    #             "test_loader":  test_loader,
+    #             "dates": {"train": d_k, "valid": None, "test": d_v},
+    #         },
+    #         "opt": {
+    #             "y_K": y_opt_k, "dates_K": d_opt_k,   # [k_len, horizon, d]
+    #             "y_V": y_opt_v, "dates_V": d_opt_v,   # [v_len, horizon, d]
+    #         },
+    #         "scaler": self.scaler,
+    #         "horizon": horizon,
+    #     }
+
     def create_all_by_counts(
         self,
         lookback: int,
@@ -107,15 +214,33 @@ class DataLoaderMultiStep(TimeSeriesDataLoader):
             self.load_data()
         data_to_use = self.raw_data  
 
-        total_len = k_len + v_len
-        total_raw_needed = lookback + total_len + horizon - 1
-        end_idx = start_idx + total_raw_needed
-
-        if end_idx > len(data_to_use):
-            raise ValueError(
-                f"[MultiStep] Not enough data. Needed {total_raw_needed}, "
-                f"available {len(data_to_use) - start_idx}"
+        # [수정됨] Horizon을 고려한 V 길이 조정 로직
+        available_len = len(data_to_use) - start_idx
+        
+        # Multi-step에서 K구간 생성에 필요한 최소 원본 데이터 길이
+        # (lookback + k_len 시퀀스 + 마지막 시퀀스의 horizon-1)
+        min_needed_for_k = lookback + k_len + horizon - 1
+        
+        if available_len < min_needed_for_k:
+             raise ValueError(
+                f"[MultiStep] Not enough data for Train(K). "
+                f"Needed {min_needed_for_k}, available {available_len}"
             )
+
+        # V까지 포함했을 때 필요한 총 길이
+        total_raw_needed = lookback + k_len + v_len + horizon - 1
+
+        if available_len < total_raw_needed:
+            adjusted_v_len = available_len - min_needed_for_k
+            print(
+                f"[MultiStep] Warning: Not enough data for full Test(V). "
+                f"Requested v_len={v_len}, available for V={adjusted_v_len}. "
+                f"Truncating V to {adjusted_v_len}."
+            )
+            v_len = adjusted_v_len
+
+        total_len = k_len + v_len
+        end_idx = start_idx + lookback + total_len + horizon - 1
 
         window_df = data_to_use.iloc[start_idx:end_idx]
 
@@ -137,6 +262,7 @@ class DataLoaderMultiStep(TimeSeriesDataLoader):
         dates_raw = pd.to_datetime(dates_raw)
 
         if len(X_all) != total_len:
+            # truncate 로직이 정상 작동했다면 이 에러는 발생하지 않아야 함
             raise ValueError(
                 f"[MultiStep] Got {len(X_all)} sequences but expected {total_len} (k_len+v_len)."
             )
@@ -170,8 +296,8 @@ class DataLoaderMultiStep(TimeSeriesDataLoader):
         )
 
         print(f"\n[MultiStep Count Mode] Result:")
-        print(f"Train(K): {len(X_k)} sequences ({d_k[0].date()} ~ {d_k[-1].date()})")
-        print(f"Test(V) : {len(X_v)} sequences ({d_v[0].date()} ~ {d_v[-1].date()})")
+        print(f"Train(K): {len(X_k)} sequences ({d_k[0].date() if len(d_k)>0 else 'N/A'} ~ {d_k[-1].date() if len(d_k)>0 else 'N/A'})")
+        print(f"Test(V) : {len(X_v)} sequences ({d_v[0].date() if len(d_v)>0 else 'N/A'} ~ {d_v[-1].date() if len(d_v)>0 else 'N/A'})")
 
         return {
             "model": {
@@ -187,7 +313,8 @@ class DataLoaderMultiStep(TimeSeriesDataLoader):
             "scaler": self.scaler,
             "horizon": horizon,
         }
-
+    
+    
     # ------------------------------------------------------------------
     # dates 모드: 2-split (K / V) 멀티스텝
     # ------------------------------------------------------------------

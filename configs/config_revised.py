@@ -16,7 +16,7 @@ MODE = "counts"              # ["dates", "counts"]
 DATA_PATH = "./data"
 FREQUENCY = "weekly"
 LOOKBACK = 52
-NUM_ASSETS = 30
+NUM_ASSETS = 5
 ALPHA = 0.05
 SEED = 2025
 BATCH_SIZE = 32 
@@ -91,7 +91,7 @@ class ROLLING:
 class CPP:
     METHODS = ['CPP-MIP', 'SAA']
     OMEGA = 0.03
-    TIME_LIMIT = 360
+    TIME_LIMIT = 2   # 1 hour
     M = 0.99
     m = -M
     zeta = 1e-6
@@ -101,10 +101,10 @@ class CCPO:
     MODEL_CLASS = LSTMModel
     LOW_RANK_R = int(0.8 * NUM_ASSETS)      
     USE_LOCAL_ELLIPSOID = False     
-    B = 20
+    B = 2
     BATCH_SIZE = 32    
-    EPOCHS = 50     
-    LEARNING_RATE = 1e-4        
+    EPOCHS = 1     
+    LEARNING_RATE = 1e-3       
     WEIGHTS_PATH = "./weights/ccpo"     
     USE_SPCI = True     
     PAST_WINDOW = 52    

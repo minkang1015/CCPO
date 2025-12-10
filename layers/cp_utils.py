@@ -1,4 +1,7 @@
+import pandas as pd
 import numpy as np
+from pathlib import Path
+from datetime import datetime, date
 import math
 import time
 import warnings
@@ -208,7 +211,8 @@ def train_models(
         else:
             raise ValueError(f"Unsupported model class: {model_cls}")
             
-        optimizer = optim.Adam(model_b.parameters(), lr=lr)
+        optimizer = optim.Adam(model_b.parameters(), lr=lr, weight_decay=1e-5)
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
 
         model_name = model_cls.__name__
         model_save_path = f"{path}/{model_name}_model_b{i}.pt"
@@ -227,7 +231,7 @@ def train_models(
                 
                 optimizer.zero_grad()
                 preds = model_b(X_batch)
-
+                
                 # in multi step
                 if preds.ndim == 3 and y_batch.ndim == 3:
                     # [B, horizon, d]
@@ -245,8 +249,11 @@ def train_models(
                 optimizer.step()
                 total_train_loss += loss.item()
             
+            scheduler.step()
             avg_train_loss = total_train_loss / len(loader_b)
-            print(f"Model Num {i} ({model_name}), Epoch {epoch+1}, Train Loss: {avg_train_loss:.4f}")
+            
+            if (epoch+1) % 20 == 0:
+                print(f"Model Num {i} ({model_name}), Epoch {epoch+1}, Train Loss: {avg_train_loss:.4f}")
 
         print(f"Saving final model for {model_name}_{i} after {EPOCHS} epochs.")
         torch.save(model_b.state_dict(), model_save_path)

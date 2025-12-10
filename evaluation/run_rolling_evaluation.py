@@ -265,6 +265,8 @@ def run_rolling_evaluation(
         # ==============================================================================
         # MAIN LOOP
         # ==============================================================================
+        
+        prediction_results_all = []
         for i, window in enumerate(window_definitions):
             window_num = i + 1
             print(f"\n{'='*80}")
@@ -311,7 +313,7 @@ def run_rolling_evaluation(
 
             # 3) Run CCPO
             if window["mode"] == "counts":
-                ccpo_res = run_ccpo_rolling_counts(
+                ccpo_res, prediction_results = run_ccpo_rolling_counts(
                     data_path=cfg.DATA_PATH, lookback=lookback, alpha=alpha,
                     model_train_len=window["train_len"],
                     K_len=window.get("K_len", 0), 
@@ -322,7 +324,7 @@ def run_rolling_evaluation(
                     cfg=cfg
                 )
             else:
-                ccpo_res = run_ccpo_rolling_dates(
+                ccpo_res, prediction_results = run_ccpo_rolling_dates(
                     data_path=cfg.DATA_PATH, lookback=lookback, alpha=alpha,
                     train_start_date=window["train_start_date"],
                     train_end_date=window["train_end_date"],
@@ -332,7 +334,8 @@ def run_rolling_evaluation(
                     cfg=cfg
                 )
             window_results["CCPO-CCO"] = ccpo_res
-
+            prediction_results_all.append(prediction_results)
+            
             if ccpo_res.get("status") == "optimal":
                 if "coverage_seq" in ccpo_res:
                     ccpo_agg_stats["coverage_seq"].extend(ccpo_res["coverage_seq"])
@@ -393,10 +396,12 @@ def run_rolling_evaluation(
             }
         
         aggregate_and_save_results(
-            portfolios=portfolios, result_folder=result_folder,
-            asset_names=asset_names, prefix="rolling_agg",
+            portfolios=portfolios, prediction_results= prediction_results_all, 
+            result_folder=result_folder, asset_names=asset_names, prefix="rolling_agg",
             cfg=cfg, results=final_results
         )
+        
+        
         print(f"📝 Log saved to: {log_file}")
         return { "portfolios": portfolios, "result_folder": result_folder }
 

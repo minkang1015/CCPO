@@ -253,7 +253,7 @@ def run_ccpo_direct(
             'threshold': radius,             
             'calibration_time': calibration_time, 
             'optimization_time': optimization_time
-        }
+        }, results
 
     except Exception as e:
         total_time = time.time() - start_time_total
@@ -419,7 +419,7 @@ def run_ccpo_rolling_counts(
             'coverage_seq': coverage_seq,
             'radius_seq': radius_seq,
             'volume_seq': volume_seq
-        }
+        }, results
 
     except Exception as e:
         total_time = time.time() - start_time_total
@@ -586,7 +586,7 @@ def run_ccpo_rolling_dates(
             'coverage_seq': coverage_seq,
             'radius_seq': radius_seq,
             'volume_seq': volume_seq
-        }
+        }, results
 
     except Exception as e:
         total_time = time.time() - start_time_total

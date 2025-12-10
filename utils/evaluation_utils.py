@@ -4,6 +4,10 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 from typing import Dict, List
+import json
+from pathlib import Path
+from datetime import datetime, date
+import torch
 
 # Import unified config
 from configs import config_revised as config
@@ -45,6 +49,33 @@ class DirectLogger:
 # ============================================================================
 # CONFIG HELPER
 # ============================================================================
+
+def json_default(o):
+    if o is None or isinstance(o, (bool, int, float, str)):
+        return o
+    if isinstance(o, (Path, )):
+        return str(o)
+    if isinstance(o, (datetime, date)):
+        return o.isoformat()
+    if isinstance(o, np.ndarray):
+        return o.tolist()
+    if isinstance(o, np.generic):  # np.float32, np.int64 등
+        return o.item()
+    if torch is not None and isinstance(o, torch.Tensor):
+        return o.detach().cpu().tolist()
+    if isinstance(o, pd.Timestamp):
+        return o.isoformat()
+    if isinstance(o, pd.Timedelta):
+        return str(o)
+    if isinstance(o, pd.Series):
+        return o.astype(object).tolist()
+    if isinstance(o, pd.Index):
+        return o.astype(object).tolist()
+    if isinstance(o, pd.DataFrame):
+        return o.to_dict(orient="records")
+    
+    return str(o)
+
 
 def _build_create_all_kwargs(cfg):
     """
@@ -95,6 +126,7 @@ def _build_create_all_kwargs(cfg):
 
 def aggregate_and_save_results(
     portfolios: Dict[str, Portfolio],
+    prediction_results: List[Dict],
     result_folder: str,
     asset_names: List[str],
     prefix: str,
@@ -184,14 +216,15 @@ def aggregate_and_save_results(
             ccpo_calib_df.to_csv(ccpo_calib_path, index=False)
             print(f"💾 CCPO calibration details saved to '{ccpo_calib_path}'")
 
-    # 시각화
+    with open(os.path.join(result_folder, f"{prefix}_prediction_results.json"), "w", encoding="utf-8") as f:
+        json.dump(prediction_results, f, ensure_ascii=False, indent=4, default=json_default)
+    
     create_all_plots(valid_portfolios, result_folder, prefix=prefix)
     
     print(f"\n📁 All results saved to: {result_folder}")
     
 
 def datestr(x):
-    """안전하게 YYYY-MM-DD 문자열로 변환"""
     try:
         return pd.Timestamp(x).date().isoformat()
     except Exception:

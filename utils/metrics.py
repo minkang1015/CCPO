@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Any, Tuple
+from configs.config_revised import ALPHA
 
 def calculate_cumulative_return(returns: np.ndarray) -> float:
     """Calculate cumulative return"""
@@ -114,9 +115,19 @@ def calculate_var_cvar(returns: np.ndarray, confidence_level: float = 0.95) -> T
     return var, cvar
 
 
-def calculate_transaction_cost(weights_history: np.ndarray) -> np.ndarray:
-    turnovers = calculate_turnover(weights_history)
-    transaction_cost = turnovers * 0.002
+def calculate_transaction_cost(weights_history, fee_rate: float = 0.0015):
+    turnovers = []
+    prev_w = None
+    
+    for w in weights_history:
+        w = np.asarray(w, dtype=float)
+        if prev_w is None:
+            turnovers.append(0.0)
+        else:
+            turnovers.append(np.sum(np.abs(w - prev_w)))
+        prev_w = w
+    turnovers = np.asarray(turnovers, dtype=float)  # shape: (T,)
+    transaction_cost = turnovers * float(fee_rate)  # shape: (T,)
 
     return transaction_cost
 
@@ -146,6 +157,7 @@ def calculate_portfolio_metrics(portfolio,
     """
     returns = portfolio.get_returns_array()
     weights = portfolio.get_weights_array()
+    returns = calculate_net_returns(returns, weights)
     
     if len(returns) == 0:
         return {
@@ -174,7 +186,7 @@ def calculate_portfolio_metrics(portfolio,
     metrics['sortino_ratio'] = calculate_sortino_ratio(returns, risk_free_rate, periods_per_year)
     metrics['calmar_ratio'] = calculate_calmar_ratio(returns, periods_per_year)
     metrics['turnover'] = np.mean(calculate_turnover(weights))
-    metrics['VaR'], metrics['CVaR'] = calculate_var_cvar(returns, confidence_level=0.95)
+    metrics['VaR'], metrics['CVaR'] = calculate_var_cvar(returns, confidence_level=ALPHA)
     
     # Computational metrics
     solve_times = [t for t in portfolio.solve_times if t > 0]  # Only non-zero solve times
