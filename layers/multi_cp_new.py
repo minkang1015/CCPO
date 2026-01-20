@@ -25,7 +25,8 @@ class SPCI_and_EnbPI():
     3. Bootstrap B models with replacement sampling
     4. LOO: predict each train sample using models that didn't see it
     """
-    def __init__(self, X_train, X_test, Y_train, Y_test, model_cls, loader, scaler=None, device=None, r=None, bins=10, n_estimators=50, max_d=5, criterion='squared_error', use_local_ellipsoid=False):
+    def __init__(self, X_train, X_test, Y_train, Y_test, model_cls, loader, scaler=None, device=None, r=None, bins=10, n_estimators=50, max_d=5, 
+                 criterion='squared_error', use_local_ellipsoid=False):
         """
         Args:
             X_train: Training/calibration data (in-sample) - shape [n_train, seq_len, feature_dim]
@@ -96,7 +97,8 @@ class SPCI_and_EnbPI():
         self.global_cov_inv = None
         
         
-    def fit_bootstrap_models_online_multistep(self, B, batch_size=64, EPOCHS=100, lr=1e-3, path='./weights/', loss_aggregation='mean', cp_residual_mode='aggregated'):
+    def fit_bootstrap_models_online_multistep(self, B, batch_size=64, EPOCHS=100, lr=1e-3, path='./weights/', loss_aggregation='mean', cp_residual_mode='aggregated',
+                                              norm_method='scaling'):
         """
         Train B bootstrap estimators and compute LOO residuals for calibration.
         
@@ -138,13 +140,14 @@ class SPCI_and_EnbPI():
         
         # Train B bootstrap models
         print(f"Training {B} bootstrap models...")
-        models, bootstrap_indices_list = train_models(
+        models, _ = train_models(
             self.model_cls, 
             bootstrap_loaders,
             EPOCHS=EPOCHS,
             lr=lr, 
             path=path, 
-            loss_aggregation='mean'     # we have to use 'mean'
+            loss_aggregation='mean',
+            norm_method=norm_method # we have to use 'mean'
         )
         
         self.models = models
@@ -249,7 +252,8 @@ class SPCI_and_EnbPI():
             test_loader=test_loader,
             models=self.models,
             device=device,
-            loader=self.loader
+            loader=self.loader,
+            norm_method=norm_method
         )
         
         test_pred_raw = result_test["test"]["y_pred"].to(device)

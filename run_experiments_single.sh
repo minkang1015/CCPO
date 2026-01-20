@@ -19,7 +19,7 @@ SEEDS=(2025)                   # seed
 WINDOW_TYPES=("expanding") # Window Type
 ASSETS=(5 10 30 49)                     # NUM_ASSETS
 
-K_LENS=(520) # 15Y, 10Y, 5Y
+K_LENS=(780) # 15Y, 10Y, 5Y
 V_LENS=(104)  # 3Y, 2Y, 1Y
 BOOTSTRAPS=(20) # the number of bootstrap models
 

@@ -45,7 +45,7 @@ def run_rolling_evaluation(
     result_folder = os.path.join(
         os.path.dirname(__file__),
         "..", "results",
-        f"run_rolling_{cfg.ROLLING.WINDOW_TYPE}_{cfg.MODE}_{prediction_mode}_{alpha}_{cfg.NUM_ASSETS}_assets_{cfg.SEED}_{k_info}K_{v_info}V_{cfg.CCPO.B}_{timestamp}"
+        f"run_rolling_{cfg.ROLLING.WINDOW_TYPE}_{cfg.MODE}_{prediction_mode}_{alpha}_{cfg.NUM_ASSETS}_assets_{cfg.SEED}_{k_info}K_{v_info}V_{cfg.CCPO.B}_{cfg.NORM_METHOD}_{timestamp}"
     )
     os.makedirs(result_folder, exist_ok=True)
 

@@ -12,7 +12,6 @@ from data.data_factory import get_dataset
 import cpp.solver as cpp_solver
 from layers.multi_cp_new import SPCI_and_EnbPI 
 from evaluation.run_ccpo import CCPOPortfolioOptimizer
-from utils.evaluation_utils import _build_create_all_kwargs
 
 # ============================================================================
 # CPP RUNNER
@@ -104,7 +103,6 @@ def run_ccpo_direct(
     data_path: str,
     lookback: int,
     alpha: float,
-    # V_dates, V_returns removed, will be obtained from loader
     cfg: config = config
 ) -> Dict[str, Any]:
     """
@@ -116,7 +114,8 @@ def run_ccpo_direct(
     print(f"    Lookback={lookback}, Alpha={alpha}")
 
     start_time_total = time.time()
-    
+    norm_method = getattr(cfg, "NORM_METHOD", "scaling")
+    use_scaler = (norm_method == "scaling")
     # [MODIFIED] Use Factory instead of manual loader creation
     # This handles the complex switching logic between Simple/Final loaders and args
     try:
@@ -186,7 +185,7 @@ def run_ccpo_direct(
 
         results = conformal_predictor.fit_bootstrap_models_online_multistep(
             B=cfg.CCPO.B, batch_size=cfg.CCPO.BATCH_SIZE, EPOCHS=cfg.CCPO.EPOCHS,
-            lr=cfg.CCPO.LEARNING_RATE, path=cfg.CCPO.WEIGHTS_PATH
+            lr=cfg.CCPO.LEARNING_RATE, path=cfg.CCPO.WEIGHTS_PATH, norm_method=cfg.NORM_METHOD
         )
 
         print(f"    Calibrating conformal prediction intervals...")
@@ -288,6 +287,9 @@ def run_ccpo_rolling_counts(
 
     start_time_total = time.time()
     n_assets = V_returns_raw.shape[1] if V_returns_raw.ndim > 1 else (1 if V_returns_raw.size > 0 else 0)
+    
+    norm_method = getattr(cfg, "NORM_METHOD", "scaling")
+    use_scaler = (norm_method == "scaling")
 
     try:
         if prediction_mode == "single":
@@ -300,7 +302,7 @@ def run_ccpo_rolling_counts(
                 start_idx=start_idx,
                 batch_size=cfg.CCPO.BATCH_SIZE,
                 shuffle_train=True,
-                use_scaler=True,
+                use_scaler=use_scaler,
                 resample_freq=cfg.FREQUENCY
             )
             train_loader = res['model']['train_loader']
@@ -316,7 +318,7 @@ def run_ccpo_rolling_counts(
                 start_idx=start_idx,
                 batch_size=cfg.CCPO.BATCH_SIZE,
                 shuffle_train=True,
-                use_scaler=True,
+                use_scaler=use_scaler,
                 resample_freq=cfg.FREQUENCY
             )
             train_loader = res['model']['train_loader']
@@ -452,7 +454,9 @@ def run_ccpo_rolling_dates(
 
     start_time_total = time.time()
     n_assets = V_returns_raw.shape[1] if V_returns_raw.ndim > 1 else (1 if V_returns_raw.size > 0 else 0)
-
+    norm_method = getattr(cfg, "NORM_METHOD", "scaling")
+    use_scaler = (norm_method == "scaling")
+    
     try:
         # 1. Load data
         if prediction_mode == "single":
@@ -466,7 +470,7 @@ def run_ccpo_rolling_dates(
                 train_start_date=train_start_date.strftime('%Y-%m-%d'),
                 batch_size=cfg.CCPO.BATCH_SIZE,
                 shuffle_train=True,
-                use_scaler=True,
+                use_scaler=use_scaler,
                 resample_freq=cfg.FREQUENCY
             )
             train_loader = res['model']['train_loader']
@@ -482,7 +486,7 @@ def run_ccpo_rolling_dates(
                 train_start_date=train_start_date.strftime('%Y-%m-%d'),
                 batch_size=cfg.CCPO.BATCH_SIZE,
                 shuffle_train=True,
-                use_scaler=True,
+                use_scaler=use_scaler,
                 resample_freq=cfg.FREQUENCY
             )
             train_loader = res['model']['train_loader']
@@ -523,7 +527,8 @@ def run_ccpo_rolling_dates(
         results = conformal_predictor.fit_bootstrap_models_online_multistep(
             B=cfg.CCPO.B, batch_size=cfg.CCPO.BATCH_SIZE, EPOCHS=cfg.CCPO.EPOCHS,
             lr=cfg.CCPO.LEARNING_RATE, path=cfg.CCPO.WEIGHTS_PATH, 
-            loss_aggregation=cfg.CCPO.LOSS_AGG, cp_residual_mode='aggregated'
+            loss_aggregation=cfg.CCPO.LOSS_AGG, cp_residual_mode='aggregated',
+            norm_method=cfg.NORM_METHOD
         )
 
         print(f"    Calibrating conformal prediction intervals...")
