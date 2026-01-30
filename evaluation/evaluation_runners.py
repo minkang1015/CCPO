@@ -53,7 +53,7 @@ def run_cpp_direct(
 
     start_time = time.time()
     try:
-        solution, _ = cpp_solver.solve( # Ignoring internal solver time reporting for now
+        solution, _ = cpp_solver.solve(
             x_dim=x_dim, delta=alpha, training_Ys=training_Ys,
             hs=hs, gs=gs, f=f, J=J, method=method,
             omega=config.CPP.OMEGA if method == 'SAA' else None,
@@ -223,7 +223,7 @@ def run_ccpo_direct(
 
             opt_result = optimizer.optimize_portfolio_socp(
                 mu_hat=current_mu, cov_matrix=cov_matrix, radius=current_radius,
-                gamma=cfg.CCPO.GAMMA, formulation=cfg.CCPO.FORMULATION
+                gamma=cfg.CCPO.GAMMA, formulation=cfg.CCPO.FORMULATION, s0=cfg.CCPO.S0
             )
 
             if opt_result['status'] == 'optimal':
@@ -358,7 +358,7 @@ def run_ccpo_rolling_counts(
 
         results = conformal_predictor.fit_bootstrap_models_online_multistep(
             B=cfg.CCPO.B, batch_size=cfg.CCPO.BATCH_SIZE, EPOCHS=cfg.CCPO.EPOCHS,
-            lr=cfg.CCPO.LEARNING_RATE, path=cfg.CCPO.WEIGHTS_PATH, loss_aggregation=cfg.CCPO.LOSS_AGG, cp_residual_mode='aggregated'
+            lr=cfg.CCPO.LEARNING_RATE, path=cfg.CCPO.WEIGHTS_PATH, loss_aggregation=cfg.CCPO.LOSS_AGG, cp_residual_mode='aggregated', norm_method=cfg.NORM_METHOD
         )
 
         print(f"    Calibrating conformal prediction intervals...")
@@ -394,7 +394,7 @@ def run_ccpo_rolling_counts(
 
             opt_result = optimizer.optimize_portfolio_socp(
                 mu_hat=current_mu, cov_matrix=cov_matrix, radius=current_radius,
-                gamma=cfg.CCPO.GAMMA, formulation=cfg.CCPO.FORMULATION
+                gamma=cfg.CCPO.GAMMA, formulation=cfg.CCPO.FORMULATION, s0=cfg.CCPO.S0
             )
             
             if opt_result['status'] == 'optimal':
@@ -564,7 +564,7 @@ def run_ccpo_rolling_dates(
 
             opt_result = optimizer.optimize_portfolio_socp(
                 mu_hat=current_mu, cov_matrix=cov_matrix, radius=current_radius,
-                gamma=cfg.CCPO.GAMMA, formulation=cfg.CCPO.FORMULATION
+                gamma=cfg.CCPO.GAMMA, formulation=cfg.CCPO.FORMULATION, s0=cfg.CCPO.S0
             )
 
             if opt_result['status'] == 'optimal':

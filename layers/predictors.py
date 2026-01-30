@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import sys
 
 # -----------------------
 # RevIN Implementation
@@ -17,8 +18,6 @@ class RevIN(nn.Module):
     def forward(self, x, mode: str):
         if mode == 'norm':
             self._get_statistics(x)
-            
-            print(f"[RevIN-Norm] Input Mean: {self.mean.mean().item():.4f}, Std: {self.stdev.mean().item():.4f}")
             x = self._normalize(x)
         elif mode == 'denorm':
             x = self._denormalize(x)

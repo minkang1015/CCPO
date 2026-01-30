@@ -15,13 +15,13 @@ MODE = "counts"              # ["dates", "counts"]
 # ==========================================
 # NORMALIZATION SETTING
 # ==========================================
-NORM_METHOD = "revin"   # ["scaling", "revin"]
+NORM_METHOD = "revin"
 
 # ---- Base Settings ----
 DATA_PATH = "./data"
 FREQUENCY = "weekly"
 LOOKBACK = 52
-NUM_ASSETS = 5
+NUM_ASSETS = 30
 ALPHA = 0.05
 SEED = 2025
 BATCH_SIZE = 32 
@@ -30,7 +30,6 @@ DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 # ==========================================
 # 1. Mode Configuration (Direct)
 # ==========================================
-# (기존 설정 유지...)
 TRAIN_END_DATES = "2015-12-31" 
 VALID_END_DATES = "2020-12-31" 
 TEST_END_DATES  = "2023-12-31" 
@@ -85,15 +84,19 @@ class CCPO:
     MODEL_CLASS = LSTMModel
     LOW_RANK_R = int(0.8 * NUM_ASSETS)      
     USE_LOCAL_ELLIPSOID = False     
-    B = 2
+    B = 20
     BATCH_SIZE = 32    
-    EPOCHS = 10     
+    EPOCHS = 50     
     LEARNING_RATE = 1e-3       
     WEIGHTS_PATH = f"./weights/ccpo_{NORM_METHOD}"     
     USE_SPCI = True     
-    PAST_WINDOW = 52    
+    PAST_WINDOW = 52  
     GAMMA = 1.0     
-    FORMULATION = "cco"
+    FORMULATION = "target"
+    if FORMULATION == "target":
+        S0 = -3.0
+    else:
+        S0 = None
     QRF_BINS = 10
     QRF_N_ESTIMATORS = 50
     QRF_MAX_DEPTH = 5

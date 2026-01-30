@@ -12,6 +12,7 @@ import os
 from layers.predictors import get_predictor, MLP, DLinear, LSTMModel
 import torch.optim as optim
 import random
+import sys
 
 def set_seed(seed: int):
     """
@@ -160,14 +161,10 @@ def train_models(
                     # RevIN을 안쓰고 순수 MLP인 경우 예외적으로 flatten 처리
                     if not hasattr(model_b, 'revin'):
                         X_batch = X_batch.float().to(device).view(X_batch.size(0), -1)
-                
+
                 X_batch = X_batch.float().to(device)
                 y_batch = y_batch.float().to(device)
-                
-                print(X_batch)
-                print(y_batch)
-                
-                
+              
                 optimizer.zero_grad()
                 preds = model_b(X_batch)
                 

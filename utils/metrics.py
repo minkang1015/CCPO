@@ -196,21 +196,36 @@ def calculate_portfolio_metrics(portfolio,
     # CPP-specific metrics
     if portfolio.thresholds_post:
         thresholds = np.array(portfolio.thresholds_post)
-        # For CPP, we stored threshold per rebalancing period, not per day
-        # Need to match returns with thresholds properly
-        # Simplified: just report average threshold
         metrics['avg_threshold'] = np.mean(thresholds)
         metrics['min_threshold'] = np.min(thresholds)
         metrics['max_threshold'] = np.max(thresholds)
         
         # Calculate Coverage Rate
-        min_len = min(len(returns), len(thresholds))
-        curr_returns = returns[:min_len]
-        curr_thresholds = thresholds[:min_len]
+        # min_len = min(len(returns), len(thresholds))
+        # curr_returns = returns[:min_len]
+        # curr_thresholds = thresholds[:min_len]
         
-        satisfied_count = np.sum(curr_returns >= curr_thresholds)
-        coverage_rate = satisfied_count / min_len if min_len > 0 else 0.0
+        # satisfied_count = np.sum(curr_returns >= curr_thresholds)
+        # coverage_rate = satisfied_count / min_len if min_len > 0 else 0.0
+                # thresholds_post is stored per rebalancing period (not per day).
+        # Align thresholds to daily returns using rebalance indices from solve_times.
         
+        rebalance_indices = [i for i, t in enumerate(portfolio.solve_times) if t > 0]
+        if rebalance_indices and len(rebalance_indices) == len(thresholds):
+            aligned_thresholds = np.empty(len(returns))
+            for idx, start in enumerate(rebalance_indices):
+                end = rebalance_indices[idx + 1] if idx + 1 < len(rebalance_indices) else len(returns)
+                aligned_thresholds[start:end] = thresholds[idx]
+            satisfied_count = np.sum(returns >= aligned_thresholds)
+            coverage_rate = satisfied_count / len(returns) if len(returns) > 0 else 0.0
+        else:
+            # Fallback to truncated comparison if alignment info is insufficient.
+            min_len = min(len(returns), len(thresholds))
+            curr_returns = returns[:min_len]
+            curr_thresholds = thresholds[:min_len]
+            satisfied_count = np.sum(curr_returns >= curr_thresholds)
+            coverage_rate = satisfied_count / min_len if min_len > 0 else 0.0
+            
         metrics['coverage_rate'] = coverage_rate
     
     else:
