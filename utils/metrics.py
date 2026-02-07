@@ -157,7 +157,7 @@ def calculate_portfolio_metrics(portfolio,
     """
     returns = portfolio.get_returns_array()
     weights = portfolio.get_weights_array()
-    returns = calculate_net_returns(returns, weights)
+    # returns = calculate_net_returns(returns, weights)
     
     if len(returns) == 0:
         return {

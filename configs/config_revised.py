@@ -48,7 +48,7 @@ V_END_DATE = "2023-12-31"
 # ROLLING Configuration
 # ==========================================
 class ROLLING:
-    WINDOW_TYPE = "expanding"
+    WINDOW_TYPE = "sliding"
     class SINGLE:
         class COUNTS:
             TRAIN_K_LEN = 520
@@ -75,7 +75,7 @@ class ROLLING:
 class CPP:
     METHODS = ['CPP-MIP', 'SAA']
     OMEGA = 0.03
-    TIME_LIMIT = 2
+    TIME_LIMIT = 3600
     M = 0.99
     m = -M
     zeta = 1e-6
@@ -92,9 +92,9 @@ class CCPO:
     USE_SPCI = True     
     PAST_WINDOW = 52  
     GAMMA = 1.0     
-    FORMULATION = "target"
+    FORMULATION = "cco"
     if FORMULATION == "target":
-        S0 = -3.0
+        S0 = 0.01
     else:
         S0 = None
     QRF_BINS = 10
